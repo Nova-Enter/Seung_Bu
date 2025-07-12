@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>도면 자동 색칠 앱</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root { --primary-color: #4f46e5; --primary-hover: #4338ca; --active-color: #10b981; }
+        html, body { height: 100%; margin: 0; overflow: hidden; }
+        body { font-family: 'Inter', sans-serif; background-color: #f0f2f5; }
+        .app-container { height: 100%; }
+        .btn { padding: 6px 12px; font-size: 13px; border-radius: 6px; font-weight: 500; transition: all 0.2s ease-in-out; cursor: pointer; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); border: none; }
+        .btn:disabled { background-color: #e5e7eb !important; color: #9ca3af !important; cursor: not-allowed; transform: none; box-shadow: none; border-color: #d1d5db; }
+        .btn-primary { background-color: var(--primary-color); color: white; }
+        .btn-primary:not(:disabled):hover { background-color: var(--primary-hover); transform: translateY(-1px); }
+        .btn-secondary { background-color: #ffffff; color: #374151; border: 1px solid #d1d5db; }
+        .btn-secondary:not(:disabled):hover { background-color: #f9fafb; }
+        .tool-active { border: 2px solid var(--active-color) !important; box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.3) !important; }
+        .color-swatch { width: 22px; height: 22px; border-radius: 6px; cursor: pointer; border: 2px solid transparent; transition: all 0.2s ease-in-out; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1); }
+        .color-swatch:hover { transform: translateY(-1px); box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15); }
+        .color-swatch.selected-swatch { border-color: var(--primary-color); box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.3); }
+        .message-box { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background-color: #333; color: white; padding: 10px 20px; border-radius: 8px; z-index: 1000; opacity: 0; visibility: hidden; transition: all 0.3s ease-in-out; box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3); font-size: 14px; }
+        .message-box.show { opacity: 1; visibility: visible; bottom: 30px; }
+        .canvas-container { cursor: default; }
+    </style>
+</head>
+<body>
+    <div class="app-container bg-white rounded-xl shadow-xl p-3 m-2 flex flex-col gap-2 max-h-[calc(100vh-1rem)]">
+        <h1 class="text-lg font-bold text-center text-gray-800 flex-shrink-0">도면 자동 색칠 앱</h1>
+        
+        <div class="flex-shrink-0 border-b border-gray-200 pb-2 space-y-2">
+            <div class="flex flex-wrap gap-x-3 gap-y-2 justify-center items-center">
+                <button id="uploadBtn" class="btn btn-primary">이미지/PDF</button>
+                <input type="file" id="fileInput" accept="image/png, image/jpeg, application/pdf" class="hidden" />
+                <div class="w-px bg-gray-300 h-6 mx-1"></div>
+                <button id="selectLayerBtn" class="btn btn-secondary">레이어 선택</button>
+                <button id="smartFillBtn" class="btn btn-secondary">스마트 채우기</button>
+                <button id="rectSelectBtn" class="btn btn-secondary">영역 선택</button>
+                <button id="polySelectBtn" class="btn btn-secondary">직선 선택</button>
+                <button id="cropBtn" class="btn btn-secondary">자르기</button>
+                <div class="w-px bg-gray-300 h-6 mx-1"></div>
+                <button id="applyCropBtn" class="btn btn-primary">자르기 실행</button>
+                <button id="clearSelectionBtn" class="btn btn-secondary">선택 해제</button>
+            </div>
+            <div class="flex flex-wrap gap-x-3 gap-y-2 justify-center items-center">
+                 <div class="flex items-center gap-1">
+                    <label for="colorPicker" class="text-xs font-medium text-gray-600">색상:</label>
+                    <input type="color" id="colorPicker" value="#4f46e5" class="w-7 h-7 border-none rounded-md cursor-pointer p-0 overflow-hidden" />
+                </div>
+                <div id="swatchContainer" class="flex items-center gap-1.5"></div>
+                <div class="w-px bg-gray-300 h-6 mx-1"></div>
+                <div class="flex items-center gap-1">
+                    <label for="opacitySlider" class="text-xs font-medium text-gray-600">투명도:</label>
+                    <input type="range" id="opacitySlider" min="0" max="1" step="0.01" value="1" class="w-20" />
+                </div>
+                <div class="flex items-center gap-1">
+                    <label for="lineWidthSlider" class="text-xs font-medium text-gray-600">선굵기:</label>
+                    <input type="range" id="lineWidthSlider" min="1" max="10" step="0.5" value="1" class="w-20" />
+                </div>
+                <div class="flex items-center gap-1">
+                    <label for="blendModeSelect" class="text-xs font-medium text-gray-600">블렌딩:</label>
+                    <select id="blendModeSelect" class="p-1 border border-gray-300 rounded-md shadow-sm text-xs focus:ring-indigo-500 focus:border-indigo-500">
+                        <option value="source-over">표준</option>
+                        <option value="multiply">곱하기</option>
+                        <option value="difference">빼기</option>
+                    </select>
+                </div>
+                <div class="w-px bg-gray-300 h-6 mx-1"></div>
+                <button id="rotateLeftBtn" class="btn btn-secondary">왼쪽 회전</button>
+                <button id="rotateRightBtn" class="btn btn-secondary">오른쪽 회전</button>
+                <button id="undoBtn" class="btn btn-secondary">실행취소</button>
+                <button id="resetBtn" class="btn btn-secondary">초기화</button>
+                <div class="w-px bg-gray-300 h-6 mx-1"></div>
+                <button id="downloadPngBtn" class="btn btn-primary">PNG</button>
+                <button id="downloadJpgBtn" class="btn btn-primary">JPG</button>
+                <button id="downloadPdfBtn" class="btn btn-primary">PDF</button>
+            </div>
+        </div>
+
+        <div id="canvasContainer" class="relative w-full flex-1 bg-gray-100 rounded-lg grid place-items-center overflow-auto min-h-0 p-2">
+            <p id="noImageText" class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-gray-500 text-lg">이미지/PDF 파일을 업로드하여 시작하세요.</p>
+            <div id="canvasSizer" style="position: relative; flex-shrink: 0;">
+                <canvas id="drawingCanvas" style="z-index: 1; position: absolute; top: 0; left: 0;"></canvas>
+                <canvas id="selectionCanvas" class="absolute" style="z-index: 2; top: 0; left: 0;"></canvas>
+            </div>
+        </div>
+
+        <div id="messageBox" class="message-box"></div>
+    </div>
+
+    <script>
+        if (window.pdfjsLib) {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.worker.min.js`;
+        }
+        
+        window.addEventListener('DOMContentLoaded', () => {
+            const uploadBtn = document.getElementById('uploadBtn');
+            const fileInput = document.getElementById('fileInput');
+            const drawingCanvas = document.getElementById('drawingCanvas');
+            const selectionCanvas = document.getElementById('selectionCanvas');
+            const canvasContainer = document.getElementById('canvasContainer');
+            const canvasSizer = document.getElementById('canvasSizer');
+            const noImageText = document.getElementById('noImageText');
+            const messageBox = document.getElementById('messageBox');
+            const selectLayerBtn = document.getElementById('selectLayerBtn');
+            const smartFillBtn = document.getElementById('smartFillBtn');
+            const rectSelectBtn = document.getElementById('rectSelectBtn');
+            const polySelectBtn = document.getElementById('polySelectBtn');
+            const cropBtn = document.getElementById('cropBtn');
+            const applyCropBtn = document.getElementById('applyCropBtn');
+            const clearSelectionBtn = document.getElementById('clearSelectionBtn');
+            const colorPicker = document.getElementById('colorPicker');
+            const swatchContainer = document.getElementById('swatchContainer');
+            const opacitySlider = document.getElementById('opacitySlider');
+            const lineWidthSlider = document.getElementById('lineWidthSlider');
+            const blendModeSelect = document.getElementById('blendModeSelect');
+            const rotateLeftBtn = document.getElementById('rotateLeftBtn');
+            const rotateRightBtn = document.getElementById('rotateRightBtn');
+            const undoBtn = document.getElementById('undoBtn');
+            const resetBtn = document.getElementById('resetBtn');
+            const downloadPngBtn = document.getElementById('downloadPngBtn');
+            const downloadJpgBtn = document.getElementById('downloadJpgBtn');
+            const downloadPdfBtn = document.getElementById('downloadPdfBtn');
+
+            const drawingCtx = drawingCanvas.getContext('2d');
+            const selectionCtx = selectionCanvas.getContext('2d');
+
+            let initialUploadImage = null;
+            let originalImage = null;
+            let layers = [];
+            let history = [];
+            let historyPointer = -1;
+            const MAX_HISTORY_STEPS = 20;
+            let activeTool = null;
+            let activeLayerIds = [];
+            let isDrawing = false;
+            let isPolygonDrawing = false;
+            let startPos = { x: 0, y: 0 };
+            let lastClientPos = { x: 0, y: 0 };
+            let animationFrameId;
+            let selectionRect = null;
+            let polygonPoints = [];
+            let cropRect = null;
+            let scale = 1;
+            const predefinedSwatchColors = ['#FF0000', '#FFA500', '#FFFF00', '#008000', '#0000FF', '#800080', '#000000', '#FFFFFF', '#808080', '#FFC0CB', '#A52A2A', '#87CEEB'];
+            let dashOffset = 0;
+            let antsInterval = null;
+
+            function hexToRgb(hex) {
+                const r = parseInt(hex.slice(1, 3), 16);
+                const g = parseInt(hex.slice(3, 5), 16);
+                const b = parseInt(hex.slice(5, 7), 16);
+                return { r, g, b };
+            }
+
+            function showMessage(text, duration = 3000) {
+                messageBox.textContent = text;
+                messageBox.classList.add('show');
+                setTimeout(() => { messageBox.classList.remove('show'); }, duration);
+            }
+
+            function updateButtonStates() {
+                const hasImage = !!originalImage;
+                const hasSelection = !!selectionRect;
+                const hasCrop = !!cropRect;
+
+                [selectLayerBtn, smartFillBtn, rectSelectBtn, polySelectBtn, cropBtn, resetBtn, downloadPngBtn, downloadJpgBtn, downloadPdfBtn, rotateLeftBtn, rotateRightBtn].forEach(btn => btn.disabled = !hasImage);
+                selectLayerBtn.disabled = !hasImage || layers.length === 0;
+                applyCropBtn.disabled = !hasCrop;
+                clearSelectionBtn.disabled = !hasSelection && !hasCrop && activeLayerIds.length === 0;
+                undoBtn.disabled = historyPointer <= 0;
+                const isSelectionToolActive = ['rectangularSelect', 'polygonLassoSelect', 'crop'].includes(activeTool);
+                lineWidthSlider.disabled = !isSelectionToolActive;
+                
+                document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('tool-active'));
+                if (activeTool) {
+                    const activeBtn = document.getElementById({
+                        'selectLayer': 'selectLayerBtn', 'smartFill': 'smartFillBtn',
+                        'rectangularSelect': 'rectSelectBtn', 'polygonLassoSelect': 'polySelectBtn', 'crop': 'cropBtn'
+                    }[activeTool]);
+                    if(activeBtn) activeBtn.classList.add('tool-active');
+                }
+                
+                let cursor = 'default';
+                if(activeTool) {
+                    if(activeTool === 'selectLayer' || activeTool === 'smartFill') cursor = 'pointer';
+                    else cursor = 'crosshair';
+                }
+                canvasContainer.style.cursor = cursor;
+            }
+            
+            function createSwatches() {
+                predefinedSwatchColors.forEach(hex => {
+                    const swatch = document.createElement('div');
+                    swatch.className = 'color-swatch';
+                    swatch.style.backgroundColor = hex;
+                    swatch.dataset.color = hex;
+                    swatch.addEventListener('click', () => {
+                        colorPicker.value = hex;
+                        handleColorPickerInput();
+                    });
+                    swatchContainer.appendChild(swatch);
+                });
+                updateSwatches();
+            }
+
+            function updateSwatches() {
+                document.querySelectorAll('.color-swatch').forEach(swatch => {
+                    swatch.classList.toggle('selected-swatch', swatch.dataset.color.toUpperCase() === colorPicker.value.toUpperCase());
+                });
+            }
+
+            function saveState() {
+                const currentState = {
+                    layers: JSON.parse(JSON.stringify(layers)),
+                    imageSrc: originalImage.src
+                };
+                history = history.slice(0, historyPointer + 1);
+                history.push(currentState);
+                if (history.length > MAX_HISTORY_STEPS) history.shift();
+                historyPointer = history.length - 1;
+                updateButtonStates();
+            }
+
+            function undo() {
+                if (historyPointer > 0) {
+                    historyPointer--;
+                    const prevState = history[historyPointer];
+                    layers = JSON.parse(JSON.stringify(prevState.layers));
+                    
+                    if (originalImage.src !== prevState.imageSrc) {
+                        const img = new Image();
+                        img.onload = () => {
+                            originalImage = img;
+                            scale = canvasContainer.clientWidth / originalImage.width;
+                            renderAll();
+                            updateButtonStates();
+                        }
+                        img.src = prevState.imageSrc;
+                    } else {
+                        renderAll();
+                        updateButtonStates();
+                    }
+                    
+                    activeLayerIds = [];
+                    showMessage('실행 취소되었습니다.');
+                } else {
+                    showMessage('더 이상 실행 취소할 작업이 없습니다.');
+                }
+            }
+            
+            function clearAllSelections() {
+                selectionRect = null;
+                polygonPoints = [];
+                isPolygonDrawing = false;
+                cropRect = null;
+                activeLayerIds = [];
+                renderSelectionCanvas();
+                updateButtonStates();
+            }
+
+            function renderAll() {
+                renderDrawingCanvas();
+                renderSelectionCanvas();
+                handleResize();
+            }
+
+            function renderDrawingCanvas() {
+                if (!originalImage) return;
+                
+                drawingCanvas.width = originalImage.width;
+                drawingCanvas.height = originalImage.height;
+                drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+                drawingCtx.drawImage(originalImage, 0, 0);
+
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = drawingCanvas.width;
+                tempCanvas.height = drawingCanvas.height;
+                const tempCtx = tempCanvas.getContext('2d');
+
+                layers.forEach(layer => {
+                    tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
+                    tempCtx.fillStyle = layer.color;
+                    layer.pixels.forEach(p => {
+                        tempCtx.fillRect(p.x, p.y, 1, 1);
+                    });
+
+                    drawingCtx.globalAlpha = layer.opacity;
+                    drawingCtx.globalCompositeOperation = layer.blendMode || 'source-over';
+                    drawingCtx.drawImage(tempCanvas, 0, 0);
+                });
+                
+                drawingCtx.globalAlpha = 1.0;
+                drawingCtx.globalCompositeOperation = 'source-over';
+            }
+
+            function renderSelectionCanvas() {
+                if (!originalImage) return;
+                selectionCanvas.width = originalImage.width;
+                selectionCanvas.height = originalImage.height;
+                selectionCtx.clearRect(0, 0, selectionCanvas.width, selectionCanvas.height);
+
+                if (activeLayerIds.length > 0) {
+                    if (!antsInterval) startMarchingAnts();
+                    selectionCtx.strokeStyle = '#000';
+                    selectionCtx.lineWidth = 1;
+                    selectionCtx.setLineDash([4, 4]);
+                    selectionCtx.lineDashOffset = -dashOffset;
+                    
+                    selectionCtx.beginPath();
+                    activeLayerIds.forEach(id => {
+                        const activeLayer = layers.find(l => l.id === id);
+                        if (activeLayer) {
+                           const allPixels = new Set(activeLayer.pixels.map(p => `${p.x},${p.y}`));
+                           allPixels.forEach(pStr => {
+                               const [x, y] = pStr.split(',').map(Number);
+                               if (!allPixels.has(`${x},${y-1}`)) { selectionCtx.moveTo(x, y); selectionCtx.lineTo(x + 1, y); }
+                               if (!allPixels.has(`${x+1},${y}`)) { selectionCtx.moveTo(x + 1, y); selectionCtx.lineTo(x + 1, y + 1); }
+                               if (!allPixels.has(`${x},${y+1}`)) { selectionCtx.moveTo(x + 1, y + 1); selectionCtx.lineTo(x, y + 1); }
+                               if (!allPixels.has(`${x-1},${y}`)) { selectionCtx.moveTo(x, y + 1); selectionCtx.lineTo(x, y); }
+                           });
+                        }
+                    });
+                    selectionCtx.stroke();
+                    selectionCtx.setLineDash([]);
+                } else {
+                    stopMarchingAnts();
+                }
+
+                if (selectionRect) {
+                    selectionCtx.strokeStyle = '#4f46e5';
+                    selectionCtx.lineWidth = lineWidthSlider.value;
+                    selectionCtx.setLineDash([5, 5]);
+                    selectionCtx.strokeRect(selectionRect.x, selectionRect.y, selectionRect.width, selectionRect.height);
+                    selectionCtx.setLineDash([]);
+                }
+                if (polygonPoints.length > 0) {
+                    selectionCtx.strokeStyle = '#4f46e5';
+                    selectionCtx.lineWidth = lineWidthSlider.value;
+                    selectionCtx.beginPath();
+                    selectionCtx.moveTo(polygonPoints[0].x, polygonPoints[0].y);
+                    for (let i = 1; i < polygonPoints.length; i++) selectionCtx.lineTo(polygonPoints[i].x, polygonPoints[i].y);
+                    selectionCtx.stroke();
+                }
+                if (cropRect) {
+                    selectionCtx.strokeStyle = '#10b981';
+                    selectionCtx.lineWidth = lineWidthSlider.value;
+                    selectionCtx.setLineDash([5, 5]);
+                    selectionCtx.strokeRect(cropRect.x, cropRect.y, cropRect.width, cropRect.height);
+                    selectionCtx.setLineDash([]);
+                }
+            }
+            
+            function handleResize() {
+                if (!originalImage || !canvasContainer) return;
+                const newCanvasWidth = originalImage.width * scale;
+                const newCanvasHeight = originalImage.height * scale;
+                
+                canvasSizer.style.width = `${newCanvasWidth}px`;
+                canvasSizer.style.height = `${newCanvasHeight}px`;
+
+                drawingCanvas.style.width = `100%`;
+                drawingCanvas.style.height = `100%`;
+                selectionCanvas.style.width = `100%`;
+                selectionCanvas.style.height = `100%`;
+            }
+
+            function handleFileChange(event) {
+                const file = event.target.files[0];
+                if (!file) return;
+                layers = [];
+                activeLayerIds = [];
+                if (file.type === "application/pdf" && window.pdfjsLib) handlePdfFile(file);
+                else if (file.type.startsWith("image/")) handleImageFile(file);
+                else showMessage("지원하지 않는 파일 형식입니다. (PNG, JPG, PDF만 가능)");
+                event.target.value = null;
+            }
+
+            function handleImageFile(file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        initialUploadImage = img;
+                        originalImage = img;
+                        noImageText.style.display = 'none';
+                        scale = canvasContainer.clientWidth / originalImage.width;
+                        renderAll();
+                        saveState();
+                        updateButtonStates();
+                        showMessage('이미지가 성공적으로 업로드되었습니다!');
+                    };
+                    img.onerror = () => showMessage('이미지를 로드할 수 없습니다.');
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            }
+
+            async function handlePdfFile(file) {
+                showMessage("PDF 파일을 변환 중입니다...", 5000);
+                const fileReader = new FileReader();
+                fileReader.onload = async function() {
+                    const typedarray = new Uint8Array(this.result);
+                    try {
+                        const pdf = await pdfjsLib.getDocument(typedarray).promise;
+                        const page = await pdf.getPage(1);
+                        const viewport = page.getViewport({ scale: 2.0 });
+                        const tempCanvas = document.createElement('canvas');
+                        tempCanvas.height = viewport.height;
+                        tempCanvas.width = viewport.width;
+                        const tempCtx = tempCanvas.getContext('2d');
+                        await page.render({ canvasContext: tempCtx, viewport: viewport }).promise;
+                        const img = new Image();
+                        img.onload = () => {
+                            initialUploadImage = img;
+                            originalImage = img;
+                            noImageText.style.display = 'none';
+                            scale = canvasContainer.clientWidth / originalImage.width;
+                            renderAll();
+                            saveState();
+                            updateButtonStates();
+                            showMessage('PDF가 이미지로 변환되었습니다!');
+                        };
+                        img.src = tempCanvas.toDataURL();
+                    } catch (error) {
+                        console.error("PDF 처리 오류:", error);
+                        showMessage("PDF 파일을 처리하는 중 오류가 발생했습니다.");
+                    }
+                };
+                fileReader.readAsArrayBuffer(file);
+            }
+
+            function activateTool(toolName) {
+                if (!originalImage) return;
+                activeTool = toolName;
+                clearAllSelections();
+                const messages = {
+                    smartFill: '캔버스를 클릭하여 색칠할 영역을 선택하세요.',
+                    rectangularSelect: '드래그하여 영역을 지정하면 자동으로 채워집니다.',
+                    polygonLassoSelect: '클릭하여 점을 추가하고, 시작점 근처를 클릭하여 닫으세요.',
+                    crop: '이미지에서 자를 영역을 드래그하세요.',
+                    selectLayer: '영역을 클릭하여 선택하세요. Shift 키로 다중 선택이 가능합니다.'
+                };
+                showMessage(messages[toolName]);
+                if (toolName === 'polygonLassoSelect') isPolygonDrawing = true;
+                updateButtonStates();
+            }
+            
+            function addNewLayer(pixelsToFill) {
+                if (pixelsToFill.length === 0) return;
+
+                const newPixelSet = new Set(pixelsToFill.map(p => `${p.x},${p.y}`));
+
+                layers = layers.map(layer => {
+                    const remainingPixels = layer.pixels.filter(p => !newPixelSet.has(`${p.x},${p.y}`));
+                    if (remainingPixels.length === 0) return null;
+                    return { ...layer, pixels: remainingPixels };
+                }).filter(Boolean);
+
+                const newLayer = {
+                    id: Date.now() + Math.random(),
+                    pixels: pixelsToFill,
+                    color: colorPicker.value,
+                    opacity: parseFloat(opacitySlider.value),
+                    blendMode: blendModeSelect.value,
+                };
+                layers.push(newLayer);
+                activeLayerIds = [newLayer.id];
+                renderAll();
+                saveState();
+            }
+
+            function getMousePos(e) {
+                const rect = selectionCanvas.getBoundingClientRect();
+                const scaleX = selectionCanvas.width / rect.width;
+                const scaleY = selectionCanvas.height / rect.height;
+                return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
+            }
+
+            function closeAndFillPolygon() {
+                const pixelsInPolygon = [];
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                polygonPoints.forEach(p => {
+                    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+                    maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+                });
+                for (let y = Math.floor(minY); y <= Math.ceil(maxY); y++) {
+                    for (let x = Math.floor(minX); x <= Math.ceil(maxX); x++) {
+                        let inside = false;
+                        for (let i = 0, j = polygonPoints.length - 1; i < polygonPoints.length; j = i++) {
+                            const xi = polygonPoints[i].x, yi = polygonPoints[i].y;
+                            const xj = polygonPoints[j].x, yj = polygonPoints[j].y;
+                            const intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+                            if (intersect) inside = !inside;
+                        }
+                        if (inside) pixelsInPolygon.push({ x, y });
+                    }
+                }
+                addNewLayer(pixelsInPolygon);
+                polygonPoints = [];
+                isPolygonDrawing = false;
+                renderSelectionCanvas();
+                updateButtonStates();
+            }
+
+            selectionCanvas.addEventListener('mousedown', (e) => {
+                if (!originalImage || !activeTool) return;
+                const pos = getMousePos(e);
+                
+                if (activeTool === 'smartFill') {
+                    handleSmartFill(pos);
+                } else if (activeTool === 'selectLayer') {
+                    const x = Math.round(pos.x);
+                    const y = Math.round(pos.y);
+                    const coordinateString = `${x},${y}`;
+                    let clickedLayer = null;
+                    for (let i = layers.length - 1; i >= 0; i--) {
+                        const layer = layers[i];
+                        const pixelSet = new Set(layer.pixels.map(p => `${p.x},${p.y}`));
+                        if (pixelSet.has(coordinateString)) {
+                            clickedLayer = layer;
+                            break;
+                        }
+                    }
+
+                    if (e.shiftKey) {
+                        if (clickedLayer) {
+                            const index = activeLayerIds.indexOf(clickedLayer.id);
+                            if (index > -1) {
+                                activeLayerIds.splice(index, 1);
+                            } else {
+                                activeLayerIds.push(clickedLayer.id);
+                            }
+                        }
+                    } else {
+                        if (clickedLayer) {
+                            activeLayerIds = [clickedLayer.id];
+                            opacitySlider.value = clickedLayer.opacity;
+                            colorPicker.value = clickedLayer.color;
+                            blendModeSelect.value = clickedLayer.blendMode || 'source-over';
+                            updateSwatches();
+                        } else {
+                            activeLayerIds = [];
+                        }
+                    }
+                    renderSelectionCanvas();
+                    updateButtonStates();
+
+                } else if (['rectangularSelect', 'crop'].includes(activeTool)) {
+                    isDrawing = true;
+                    startPos = pos;
+                    lastClientPos = { x: e.clientX, y: e.clientY };
+                    startSelectionLoop();
+                } else if (activeTool === 'polygonLassoSelect' && isPolygonDrawing) {
+                    if (polygonPoints.length > 2) {
+                        const firstPoint = polygonPoints[0];
+                        const distance = Math.sqrt(Math.pow(pos.x - firstPoint.x, 2) + Math.pow(pos.y - firstPoint.y, 2));
+                        if (distance < 10 / scale) { 
+                            closeAndFillPolygon();
+                            return;
+                        }
+                    }
+                    polygonPoints.push(pos);
+                    renderSelectionCanvas();
+                }
+            });
+            
+            function handleSmartFill(pos) {
+                if (!initialUploadImage) return;
+                const originalCanvas = document.createElement('canvas');
+                originalCanvas.width = drawingCanvas.width;
+                originalCanvas.height = drawingCanvas.height;
+                const originalCtx = originalCanvas.getContext('2d');
+                originalCtx.drawImage(initialUploadImage, 0, 0);
+                const originalPixels = originalCtx.getImageData(0, 0, originalCanvas.width, originalCanvas.height).data;
+                const width = drawingCanvas.width, height = drawingCanvas.height;
+                const startX = Math.round(pos.x), startY = Math.round(pos.y);
+                const startNode = (startY * width + startX) * 4;
+                const targetColor = { r: originalPixels[startNode], g: originalPixels[startNode + 1], b: originalPixels[startNode + 2] };
+                const tolerance = 32;
+                const queue = [{ x: startX, y: startY }];
+                const visited = new Uint8Array(width * height);
+                const pixelsToFill = [];
+                while (queue.length > 0) {
+                    const { x, y } = queue.shift();
+                    const currentIndex = y * width + x;
+                    if (x < 0 || x >= width || y < 0 || y >= height || visited[currentIndex]) continue;
+                    visited[currentIndex] = 1;
+                    const dataIndex = currentIndex * 4;
+                    const currentColor = { r: originalPixels[dataIndex], g: originalPixels[dataIndex + 1], b: originalPixels[dataIndex + 2] };
+                    const distance = Math.sqrt(Math.pow(currentColor.r - targetColor.r, 2) + Math.pow(currentColor.g - targetColor.g, 2) + Math.pow(currentColor.b - targetColor.b, 2));
+                    if (distance <= tolerance) {
+                        pixelsToFill.push({ x, y });
+                        queue.push({ x: x - 1, y: y }, { x: x + 1, y: y }, { x: x, y: y - 1 }, { x: x, y: y + 1 });
+                    }
+                }
+                addNewLayer(pixelsToFill);
+            }
+            
+            function handleApplyCrop() {
+                if (!cropRect || cropRect.width <= 0 || cropRect.height <= 0) return;
+                
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = drawingCanvas.width;
+                tempCanvas.height = drawingCanvas.height;
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCtx.drawImage(originalImage, 0, 0);
+                layers.forEach(layer => {
+                    const layerCanvas = document.createElement('canvas');
+                    layerCanvas.width = tempCanvas.width;
+                    layerCanvas.height = tempCanvas.height;
+                    const layerCtx = layerCanvas.getContext('2d');
+                    layerCtx.fillStyle = layer.color;
+                    layer.pixels.forEach(p => { layerCtx.fillRect(p.x, p.y, 1, 1); });
+                    
+                    tempCtx.globalAlpha = layer.opacity;
+                    tempCtx.globalCompositeOperation = layer.blendMode || 'source-over';
+                    tempCtx.drawImage(layerCanvas, 0, 0);
+                });
+                tempCtx.globalAlpha = 1.0;
+                tempCtx.globalCompositeOperation = 'source-over';
+
+                const sx = Math.max(0, Math.floor(cropRect.x)), sy = Math.max(0, Math.floor(cropRect.y));
+                const sWidth = Math.floor(Math.min(drawingCanvas.width - sx, cropRect.width)), sHeight = Math.floor(Math.min(drawingCanvas.height - sy, cropRect.height));
+                if (sWidth <= 0 || sHeight <= 0) {
+                    clearAllSelections();
+                    return showMessage('유효한 자르기 영역이 아닙니다.');
+                }
+                const croppedImageData = tempCtx.getImageData(sx, sy, sWidth, sHeight);
+                
+                const cropResultCanvas = document.createElement('canvas');
+                cropResultCanvas.width = sWidth;
+                cropResultCanvas.height = sHeight;
+                cropResultCanvas.getContext('2d').putImageData(croppedImageData, 0, 0);
+
+                const newImg = new Image();
+                newImg.onload = () => {
+                    layers = [];
+                    activeLayerIds = [];
+                    originalImage = newImg;
+                    initialUploadImage = newImg;
+                    scale = canvasContainer.clientWidth / originalImage.width;
+                    clearAllSelections();
+                    renderAll();
+                    saveState();
+                    updateButtonStates();
+                    showMessage('이미지를 잘랐습니다.');
+                };
+                newImg.src = cropResultCanvas.toDataURL();
+            }
+            
+            function handleReset() {
+                 if (!initialUploadImage) return;
+                originalImage = initialUploadImage;
+                layers = [];
+                activeLayerIds = [];
+                scale = canvasContainer.clientWidth / originalImage.width;
+                clearAllSelections();
+                renderAll();
+                saveState();
+                updateButtonStates();
+                showMessage('캔버스가 초기화되었습니다.');
+            }
+            
+            function handleDownload(format) {
+                if (!drawingCanvas || !originalImage) return;
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = drawingCanvas.width;
+                tempCanvas.height = drawingCanvas.height;
+                const tempCtx = tempCanvas.getContext('2d');
+                
+                if(format === 'jpeg'){
+                    tempCtx.fillStyle = '#FFFFFF';
+                    tempCtx.fillRect(0,0, tempCanvas.width, tempCanvas.height);
+                }
+                
+                tempCtx.drawImage(drawingCanvas, 0, 0);
+
+                if (format === 'pdf') {
+                    const { jsPDF } = window.jspdf;
+                    const imgData = tempCanvas.toDataURL('image/jpeg', 1.0);
+                    const pdf = new jsPDF({
+                        orientation: tempCanvas.width > tempCanvas.height ? 'l' : 'p',
+                        unit: 'px',
+                        format: [tempCanvas.width, tempCanvas.height]
+                    });
+                    pdf.addImage(imgData, 'JPEG', 0, 0, tempCanvas.width, tempCanvas.height);
+                    pdf.save('colored_drawing.pdf');
+                } else {
+                    const a = document.createElement('a');
+                    a.href = tempCanvas.toDataURL(`image/${format}`);
+                    a.download = `colored_drawing.${format}`;
+                    a.click();
+                }
+                 showMessage(`${format.toUpperCase()} 파일이 다운로드됩니다!`);
+            }
+            
+            function handleOpacityChange() {
+                if (activeLayerIds.length > 0) {
+                    const newOpacity = parseFloat(opacitySlider.value);
+                    activeLayerIds.forEach(id => {
+                        const layer = layers.find(l => l.id === id);
+                        if (layer) layer.opacity = newOpacity;
+                    });
+                    renderDrawingCanvas();
+                }
+            }
+
+            function handleOpacityChangeEnd() {
+                if (activeLayerIds.length > 0) saveState();
+            }
+
+            function handleColorPickerInput() {
+                updateSwatches();
+                if (activeLayerIds.length > 0) {
+                    const newColor = colorPicker.value;
+                    activeLayerIds.forEach(id => {
+                        const layer = layers.find(l => l.id === id);
+                        if (layer) layer.color = newColor;
+                    });
+                    renderDrawingCanvas();
+                }
+            }
+
+            function handleColorPickerChange() {
+                if (activeLayerIds.length > 0) saveState();
+            }
+            
+            function handleBlendModeChange() {
+                 if (activeLayerIds.length > 0) {
+                    const newBlendMode = blendModeSelect.value;
+                    activeLayerIds.forEach(id => {
+                        const layer = layers.find(l => l.id === id);
+                        if (layer) layer.blendMode = newBlendMode;
+                    });
+                    renderDrawingCanvas();
+                    saveState();
+                }
+            }
+
+            function startSelectionLoop() {
+                if (!isDrawing) return;
+                const containerRect = canvasContainer.getBoundingClientRect();
+                const { x: clientX, y: clientY } = lastClientPos;
+                const threshold = 50, scrollSpeed = 15;
+                if (clientY < containerRect.top + threshold) canvasContainer.scrollTop -= scrollSpeed;
+                else if (clientY > containerRect.bottom - threshold) canvasContainer.scrollTop += scrollSpeed;
+                const currentPos = getMousePos({ clientX, clientY });
+                const rect = {
+                    x: Math.min(currentPos.x, startPos.x), y: Math.min(currentPos.y, startPos.y),
+                    width: Math.abs(currentPos.x - startPos.x), height: Math.abs(currentPos.y - startPos.y)
+                };
+                if (activeTool === 'rectangularSelect') selectionRect = rect;
+                else if (activeTool === 'crop') cropRect = rect;
+                renderSelectionCanvas();
+                animationFrameId = requestAnimationFrame(startSelectionLoop);
+            }
+
+            window.addEventListener('mousemove', (e) => {
+                if (isDrawing) lastClientPos = { x: e.clientX, y: e.clientY };
+            });
+
+            window.addEventListener('mouseup', () => {
+                if (isDrawing) {
+                    isDrawing = false;
+                    cancelAnimationFrame(animationFrameId);
+                    if (activeTool === 'rectangularSelect' && selectionRect && selectionRect.width > 1 && selectionRect.height > 1) {
+                        const pixelsToFill = [];
+                        const { x, y, width, height } = selectionRect;
+                        for (let i = Math.floor(y); i < y + height; i++) {
+                            for (let j = Math.floor(x); j < x + width; j++) pixelsToFill.push({ x: j, y: i });
+                        }
+                        addNewLayer(pixelsToFill);
+                    }
+                    updateButtonStates();
+                }
+            });
+
+            function handleZoom(e) {
+                if (!originalImage) return;
+                if (e.ctrlKey || e.metaKey) {
+                    e.preventDefault();
+                    const zoomFactor = 0.1;
+                    const oldScale = scale;
+                    const container = canvasContainer;
+                    const viewPortX = container.scrollLeft + container.clientWidth / 2;
+                    const viewPortY = container.scrollTop + container.clientHeight / 2;
+                    const imageX = viewPortX / oldScale;
+                    const imageY = viewPortY / oldScale;
+                    
+                    if (e.key === '=' || e.key === '+') {
+                        scale += zoomFactor;
+                    } else if (e.key === '-') {
+                        scale = Math.max(0.1, scale - zoomFactor);
+                    }
+                    
+                    handleResize();
+
+                    const newScrollLeft = (imageX * scale) - (container.clientWidth / 2);
+                    const newScrollTop = (imageY * scale) - (container.clientHeight / 2);
+                    container.scrollLeft = newScrollLeft;
+                    container.scrollTop = newScrollTop;
+                }
+            }
+            
+            function handleRotate(degrees) {
+                if (!originalImage) return;
+
+                const tempCanvas = document.createElement('canvas');
+                const tempCtx = tempCanvas.getContext('2d');
+                
+                tempCanvas.width = drawingCanvas.height;
+                tempCanvas.height = drawingCanvas.width;
+
+                tempCtx.translate(tempCanvas.width / 2, tempCanvas.height / 2);
+                tempCtx.rotate(degrees * Math.PI / 180);
+                tempCtx.drawImage(drawingCanvas, -drawingCanvas.width / 2, -drawingCanvas.height / 2);
+
+                const newImg = new Image();
+                newImg.onload = () => {
+                    layers = [];
+                    activeLayerIds = [];
+                    originalImage = newImg;
+                    initialUploadImage = newImg;
+                    scale = canvasContainer.clientWidth / originalImage.width;
+                    clearAllSelections();
+                    renderAll();
+                    saveState();
+                    updateButtonStates();
+                    showMessage(`${degrees > 0 ? '오른쪽' : '왼쪽'}으로 회전했습니다.`);
+                };
+                newImg.src = tempCanvas.toDataURL();
+            }
+
+            function startMarchingAnts() {
+                if (antsInterval) return;
+                antsInterval = setInterval(() => {
+                    dashOffset = (dashOffset + 1) % 16;
+                    renderSelectionCanvas();
+                }, 100);
+            }
+
+            function stopMarchingAnts() {
+                clearInterval(antsInterval);
+                antsInterval = null;
+            }
+
+            function init() {
+                const fillSelectedBtn = document.getElementById('fillSelectedBtn');
+                if (fillSelectedBtn) fillSelectedBtn.style.display = 'none';
+
+                [selectLayerBtn, smartFillBtn, rectSelectBtn, polySelectBtn, cropBtn, applyCropBtn, clearSelectionBtn, undoBtn, resetBtn, downloadPngBtn, downloadJpgBtn, downloadPdfBtn, rotateLeftBtn, rotateRightBtn].forEach(btn => btn.classList.add('tool-btn'));
+                uploadBtn.addEventListener('click', () => fileInput.click());
+                fileInput.addEventListener('change', handleFileChange);
+                selectLayerBtn.addEventListener('click', () => activateTool('selectLayer'));
+                smartFillBtn.addEventListener('click', () => activateTool('smartFill'));
+                rectSelectBtn.addEventListener('click', () => activateTool('rectangularSelect'));
+                polySelectBtn.addEventListener('click', () => activateTool('polygonLassoSelect'));
+                cropBtn.addEventListener('click', () => activateTool('crop'));
+                applyCropBtn.addEventListener('click', handleApplyCrop);
+                clearSelectionBtn.addEventListener('click', clearAllSelections);
+                undoBtn.addEventListener('click', undo);
+                resetBtn.addEventListener('click', handleReset);
+                downloadPngBtn.addEventListener('click', () => handleDownload('png'));
+                downloadJpgBtn.addEventListener('click', () => handleDownload('jpeg'));
+                downloadPdfBtn.addEventListener('click', () => handleDownload('pdf'));
+                rotateLeftBtn.addEventListener('click', () => handleRotate(-90));
+                rotateRightBtn.addEventListener('click', () => handleRotate(90));
+                colorPicker.addEventListener('input', handleColorPickerInput);
+                colorPicker.addEventListener('change', handleColorPickerChange);
+                opacitySlider.addEventListener('input', handleOpacityChange);
+                opacitySlider.addEventListener('mouseup', handleOpacityChangeEnd);
+                opacitySlider.addEventListener('touchend', handleOpacityChangeEnd);
+                blendModeSelect.addEventListener('change', handleBlendModeChange);
+                window.addEventListener('resize', handleResize);
+                window.addEventListener('keydown', (e) => {
+                    if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+                        e.preventDefault();
+                        undo();
+                    } else if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+' || e.key === '-')) {
+                        handleZoom(e);
+                    }
+                });
+                createSwatches();
+                updateButtonStates();
+            }
+
+            init();
+        });
+    </script>
+</body>
+</html>
