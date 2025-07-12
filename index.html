@@ -51,6 +51,42 @@
             background-color: #f3f4f6;
             border-radius: 4px;
         }
+        
+        /* --- 모바일 반응형 스타일 --- */
+        @media (max-width: 768px) {
+            .app-container {
+                padding: 0.5rem;
+                margin: 0.25rem;
+                gap: 0.5rem;
+            }
+            h1.text-lg {
+                font-size: 1rem; /* 16px */
+            }
+            .btn {
+                padding: 5px 10px;
+                font-size: 12px;
+            }
+            .flex-shrink-0.border-b {
+                padding-bottom: 0.5rem;
+            }
+            div.flex.flex-wrap.gap-x-3 {
+                 gap: 0.5rem 0.75rem;
+            }
+            label.text-xs {
+                font-size: 11px;
+            }
+            input.w-20 { /* Sliders */
+                width: 4.5rem; /* 72px */
+            }
+            .color-swatch {
+                width: 20px;
+                height: 20px;
+            }
+            .w-px.bg-gray-300 { /* Dividers */
+                margin-left: 0.25rem;
+                margin-right: 0.25rem;
+            }
+        }
     </style>
 </head>
 <body>
@@ -643,12 +679,12 @@
             function handleDrawStart(e) {
                 if (e.touches && (e.touches.length > 1 || activeTool === null)) return;
                 if (e.touches) {
+                    e.preventDefault();
                     const currentTime = new Date().getTime();
                     const tapLength = currentTime - lastTapTime;
                     lastTapTime = currentTime;
                     if (tapLength < 300 && tapLength > 0) { // Double tap
                         if (activeTool === 'polygonLassoSelect' && isPolygonDrawing && polygonPoints.length > 1) {
-                            e.preventDefault();
                             polygonPoints.pop(); // Remove the point added by the first tap of the double-tap
                             closeAndFillPolygon();
                         }
@@ -807,7 +843,6 @@
                 newImg.src = cropResultCanvas.toDataURL();
             }
             
-            // --- handleReset 개선: 활성 도구 초기화 추가 ---
             function handleReset() {
                  if (!initialUploadImage) return;
                 originalImage = initialUploadImage;
@@ -974,7 +1009,6 @@
                 }
             }
 
-            // --- 더블클릭 핸들러 추가 ---
             function handleDoubleClick(e) {
                 if (activeTool === 'polygonLassoSelect' && isPolygonDrawing && polygonPoints.length > 0) {
                     e.preventDefault();
@@ -991,7 +1025,8 @@
                 const imageX = (container.scrollLeft + centerX) / oldScale;
                 const imageY = (container.scrollTop + centerY) / oldScale;
 
-                scale = Math.max(0.1, Math.min(newScale, 10)); // Zoom range limit
+                // --- 줌 안정성 강화: 최대 줌 레벨 제한 ---
+                scale = Math.max(0.1, Math.min(newScale, 8)); // Max zoom level set to 8x
                 
                 handleResize();
 
@@ -1163,8 +1198,8 @@
                 window.addEventListener('mousemove', handleMouseMove);
                 window.addEventListener('mouseup', handleMouseUp);
                 
-                // Touch Events (Double-tap is handled within handleDrawStart for simplicity)
-                canvasContainer.addEventListener('touchstart', handleDrawStart, { passive: false });
+                // Touch Events
+                canvasContainer.addEventListener('touchstart', handleTouchStart, { passive: false });
                 canvasContainer.addEventListener('touchmove', handleTouchMove, { passive: false });
                 canvasContainer.addEventListener('touchend', handleTouchEnd);
 
