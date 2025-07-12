@@ -26,6 +26,31 @@
         .message-box { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background-color: #333; color: white; padding: 10px 20px; border-radius: 8px; z-index: 1000; opacity: 0; visibility: hidden; transition: all 0.3s ease-in-out; box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3); font-size: 14px; }
         .message-box.show { opacity: 1; visibility: visible; bottom: 30px; }
         .canvas-container { cursor: default; }
+        #pdfPageSelector, #contextMenu { z-index: 2000; }
+        #contextMenu {
+            position: fixed;
+            display: none;
+            background-color: white;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            padding: 8px;
+            min-width: 150px;
+        }
+        #contextMenu button {
+            display: block;
+            width: 100%;
+            text-align: left;
+            padding: 8px 12px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        #contextMenu button:hover {
+            background-color: #f3f4f6;
+            border-radius: 4px;
+        }
     </style>
 </head>
 <body>
@@ -90,6 +115,19 @@
         </div>
 
         <div id="messageBox" class="message-box"></div>
+        
+        <div id="pdfPageSelector" class="hidden fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center">
+            <div class="bg-white rounded-lg p-6 max-w-4xl max-h-[80vh] overflow-y-auto">
+                <h2 class="text-xl font-bold mb-4">페이지 선택</h2>
+                <div id="pdfPageContainer" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4"></div>
+            </div>
+        </div>
+
+        <div id="contextMenu">
+            <button id="contextDownloadPng">PNG로 저장</button>
+            <button id="contextDownloadJpg">JPG로 저장</button>
+            <button id="contextDownloadPdf">PDF로 저장</button>
+        </div>
     </div>
 
     <script>
@@ -125,6 +163,12 @@
             const downloadPngBtn = document.getElementById('downloadPngBtn');
             const downloadJpgBtn = document.getElementById('downloadJpgBtn');
             const downloadPdfBtn = document.getElementById('downloadPdfBtn');
+            const pdfPageSelector = document.getElementById('pdfPageSelector');
+            const pdfPageContainer = document.getElementById('pdfPageContainer');
+            const contextMenu = document.getElementById('contextMenu');
+            const contextDownloadPng = document.getElementById('contextDownloadPng');
+            const contextDownloadJpg = document.getElementById('contextDownloadJpg');
+            const contextDownloadPdf = document.getElementById('contextDownloadPdf');
 
             const drawingCtx = drawingCanvas.getContext('2d');
             const selectionCtx = selectionCanvas.getContext('2d');
@@ -407,25 +451,12 @@
                     const typedarray = new Uint8Array(this.result);
                     try {
                         const pdf = await pdfjsLib.getDocument(typedarray).promise;
-                        const page = await pdf.getPage(1);
-                        const viewport = page.getViewport({ scale: 2.0 });
-                        const tempCanvas = document.createElement('canvas');
-                        tempCanvas.height = viewport.height;
-                        tempCanvas.width = viewport.width;
-                        const tempCtx = tempCanvas.getContext('2d');
-                        await page.render({ canvasContext: tempCtx, viewport: viewport }).promise;
-                        const img = new Image();
-                        img.onload = () => {
-                            initialUploadImage = img;
-                            originalImage = img;
-                            noImageText.style.display = 'none';
-                            scale = canvasContainer.clientWidth / originalImage.width;
-                            renderAll();
-                            saveState();
-                            updateButtonStates();
-                            showMessage('PDF가 이미지로 변환되었습니다!');
-                        };
-                        img.src = tempCanvas.toDataURL();
+                        if (pdf.numPages === 1) {
+                            const page = await pdf.getPage(1);
+                            renderPdfPage(page);
+                        } else {
+                            showPdfPageSelector(pdf);
+                        }
                     } catch (error) {
                         console.error("PDF 처리 오류:", error);
                         showMessage("PDF 파일을 처리하는 중 오류가 발생했습니다.");
@@ -433,6 +464,52 @@
                 };
                 fileReader.readAsArrayBuffer(file);
             }
+            
+            async function showPdfPageSelector(pdf) {
+                pdfPageContainer.innerHTML = '';
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const viewport = page.getViewport({ scale: 0.3 });
+                    const canvas = document.createElement('canvas');
+                    canvas.height = viewport.height;
+                    canvas.width = viewport.width;
+                    const ctx = canvas.getContext('2d');
+                    await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+                    
+                    const pageDiv = document.createElement('div');
+                    pageDiv.className = 'p-2 border rounded-md cursor-pointer hover:bg-gray-100';
+                    pageDiv.appendChild(canvas);
+                    pageDiv.addEventListener('click', () => {
+                        renderPdfPage(page);
+                        pdfPageSelector.classList.add('hidden');
+                    });
+                    pdfPageContainer.appendChild(pageDiv);
+                }
+                pdfPageSelector.classList.remove('hidden');
+            }
+
+            async function renderPdfPage(page) {
+                const viewport = page.getViewport({ scale: 2.0 });
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.height = viewport.height;
+                tempCanvas.width = viewport.width;
+                const tempCtx = tempCanvas.getContext('2d');
+                await page.render({ canvasContext: tempCtx, viewport: viewport }).promise;
+                
+                const img = new Image();
+                img.onload = () => {
+                    initialUploadImage = img;
+                    originalImage = img;
+                    noImageText.style.display = 'none';
+                    scale = canvasContainer.clientWidth / originalImage.width;
+                    renderAll();
+                    saveState();
+                    updateButtonStates();
+                    showMessage('PDF 페이지를 불러왔습니다!');
+                };
+                img.src = tempCanvas.toDataURL();
+            }
+
 
             function activateTool(toolName) {
                 if (!originalImage) return;
@@ -885,6 +962,22 @@
                         handleZoom(e);
                     }
                 });
+                canvasContainer.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                    if (!originalImage) return;
+                    contextMenu.style.left = `${e.clientX}px`;
+                    contextMenu.style.top = `${e.clientY}px`;
+                    contextMenu.style.display = 'block';
+                });
+                document.addEventListener('click', (e) => {
+                    if (!contextMenu.contains(e.target)) {
+                        contextMenu.style.display = 'none';
+                    }
+                });
+                contextDownloadPng.addEventListener('click', () => { handleDownload('png'); contextMenu.style.display = 'none'; });
+                contextDownloadJpg.addEventListener('click', () => { handleDownload('jpeg'); contextMenu.style.display = 'none'; });
+                contextDownloadPdf.addEventListener('click', () => { handleDownload('pdf'); contextMenu.style.display = 'none'; });
+
                 createSwatches();
                 updateButtonStates();
             }
