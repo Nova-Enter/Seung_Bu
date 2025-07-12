@@ -401,6 +401,7 @@
                 handleResize();
             }
 
+            // --- 렌더링 로직 개선: 덧칠 문제 해결 ---
             function renderDrawingCanvas() {
                 if (!originalImage) return;
                 
@@ -409,24 +410,58 @@
                 drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
                 drawingCtx.drawImage(originalImage, 0, 0);
 
-                const tempCanvas = document.createElement('canvas');
-                tempCanvas.width = drawingCanvas.width;
-                tempCanvas.height = drawingCanvas.height;
-                const tempCtx = tempCanvas.getContext('2d');
+                // 속성별로 레이어 그룹화
+                const layerGroups = layers.reduce((acc, layer) => {
+                    const key = `${layer.color}-${layer.opacity}-${layer.blendMode}-${layer.feather}`;
+                    if (!acc[key]) {
+                        acc[key] = [];
+                    }
+                    acc[key].push(layer);
+                    return acc;
+                }, {});
 
-                layers.forEach(layer => {
-                    tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
-                    tempCtx.fillStyle = layer.color;
-                    layer.pixels.forEach(p => {
-                        tempCtx.fillRect(p.x, p.y, 1, 1);
+                // 그룹별로 렌더링
+                Object.values(layerGroups).forEach(group => {
+                    const groupProperties = group[0]; 
+
+                    const groupCanvas = document.createElement('canvas');
+                    groupCanvas.width = drawingCanvas.width;
+                    groupCanvas.height = drawingCanvas.height;
+                    const groupCtx = groupCanvas.getContext('2d');
+                    
+                    groupCtx.fillStyle = groupProperties.color;
+
+                    // 그룹 내 모든 레이어를 하나의 캔버스에 그림
+                    group.forEach(layer => {
+                        switch (layer.type) {
+                            case 'polygon':
+                                groupCtx.beginPath();
+                                groupCtx.moveTo(layer.data[0].x, layer.data[0].y);
+                                for (let i = 1; i < layer.data.length; i++) {
+                                    groupCtx.lineTo(layer.data[i].x, layer.data[i].y);
+                                }
+                                groupCtx.closePath();
+                                groupCtx.fill();
+                                break;
+                            case 'rectangle':
+                                groupCtx.fillRect(layer.data.x, layer.data.y, layer.data.width, layer.data.height);
+                                break;
+                            case 'pixels':
+                                layer.data.forEach(p => {
+                                    groupCtx.fillRect(p.x, p.y, 1, 1);
+                                });
+                                break;
+                        }
                     });
 
-                    drawingCtx.globalAlpha = layer.opacity;
-                    drawingCtx.globalCompositeOperation = layer.blendMode || 'source-over';
-                    drawingCtx.filter = `blur(${layer.feather || 0}px)`;
-                    drawingCtx.drawImage(tempCanvas, 0, 0);
+                    // 그룹화된 캔버스를 최종 캔버스에 적용
+                    drawingCtx.globalAlpha = groupProperties.opacity;
+                    drawingCtx.globalCompositeOperation = groupProperties.blendMode || 'source-over';
+                    drawingCtx.filter = `blur(${groupProperties.feather || 0}px)`;
+                    drawingCtx.drawImage(groupCanvas, 0, 0);
                 });
                 
+                // 컨텍스트 속성 초기화
                 drawingCtx.filter = 'none';
                 drawingCtx.globalAlpha = 1.0;
                 drawingCtx.globalCompositeOperation = 'source-over';
@@ -438,7 +473,7 @@
                 selectionCanvas.height = originalImage.height;
                 selectionCtx.clearRect(0, 0, selectionCanvas.width, selectionCanvas.height);
 
-                // Selected layer outline (Marching Ants)
+                // 선택된 레이어 외곽선 (Marching Ants)
                 if (activeLayerIds.length > 0) {
                     if (!antsInterval) startMarchingAnts();
                     selectionCtx.strokeStyle = '#000';
@@ -450,14 +485,28 @@
                     activeLayerIds.forEach(id => {
                         const activeLayer = layers.find(l => l.id === id);
                         if (activeLayer) {
-                           const allPixels = new Set(activeLayer.pixels.map(p => `${p.x},${p.y}`));
-                           allPixels.forEach(pStr => {
-                               const [x, y] = pStr.split(',').map(Number);
-                               if (!allPixels.has(`${x},${y-1}`)) { selectionCtx.moveTo(x, y); selectionCtx.lineTo(x + 1, y); }
-                               if (!allPixels.has(`${x+1},${y}`)) { selectionCtx.moveTo(x + 1, y); selectionCtx.lineTo(x + 1, y + 1); }
-                               if (!allPixels.has(`${x},${y+1}`)) { selectionCtx.moveTo(x + 1, y + 1); selectionCtx.lineTo(x, y + 1); }
-                               if (!allPixels.has(`${x-1},${y}`)) { selectionCtx.moveTo(x, y + 1); selectionCtx.lineTo(x, y); }
-                           });
+                           switch (activeLayer.type) {
+                               case 'polygon':
+                                   selectionCtx.moveTo(activeLayer.data[0].x, activeLayer.data[0].y);
+                                   for (let i = 1; i < activeLayer.data.length; i++) {
+                                       selectionCtx.lineTo(activeLayer.data[i].x, activeLayer.data[i].y);
+                                   }
+                                   selectionCtx.closePath();
+                                   break;
+                               case 'rectangle':
+                                   selectionCtx.rect(activeLayer.data.x, activeLayer.data.y, activeLayer.data.width, activeLayer.data.height);
+                                   break;
+                               case 'pixels':
+                                   const allPixels = new Set(activeLayer.data.map(p => `${p.x},${p.y}`));
+                                   allPixels.forEach(pStr => {
+                                       const [x, y] = pStr.split(',').map(Number);
+                                       if (!allPixels.has(`${x},${y-1}`)) { selectionCtx.moveTo(x, y); selectionCtx.lineTo(x + 1, y); }
+                                       if (!allPixels.has(`${x+1},${y}`)) { selectionCtx.moveTo(x + 1, y); selectionCtx.lineTo(x + 1, y + 1); }
+                                       if (!allPixels.has(`${x},${y+1}`)) { selectionCtx.moveTo(x + 1, y + 1); selectionCtx.lineTo(x, y + 1); }
+                                       if (!allPixels.has(`${x-1},${y}`)) { selectionCtx.moveTo(x, y + 1); selectionCtx.lineTo(x, y); }
+                                   });
+                                   break;
+                           }
                         }
                     });
                     selectionCtx.stroke();
@@ -465,7 +514,7 @@
                     stopMarchingAnts();
                 }
 
-                // Rectangular selection
+                // 사각 선택
                 if (selectionRect) {
                     selectionCtx.strokeStyle = '#4f46e5';
                     selectionCtx.lineWidth = lineWidthSlider.value / scale;
@@ -473,7 +522,7 @@
                     selectionCtx.strokeRect(selectionRect.x, selectionRect.y, selectionRect.width, selectionRect.height);
                 }
 
-                // Polygon selection (committed lines)
+                // 직선 선택 (그려진 선)
                 if (polygonPoints.length > 0) {
                     selectionCtx.strokeStyle = '#4f46e5';
                     selectionCtx.lineWidth = lineWidthSlider.value / scale;
@@ -484,11 +533,11 @@
                     selectionCtx.stroke();
                 }
 
-                // Polygon selection preview line (SOLID LINE)
+                // 직선 선택 미리보기 선 (실선)
                 if (polygonPreviewEndPoint && polygonPoints.length > 0) {
                     selectionCtx.strokeStyle = '#4f46e5';
                     selectionCtx.lineWidth = lineWidthSlider.value / scale;
-                    selectionCtx.setLineDash([]); // Changed from dashed to solid
+                    selectionCtx.setLineDash([]);
                     selectionCtx.beginPath();
                     const lastPoint = polygonPoints[polygonPoints.length - 1];
                     selectionCtx.moveTo(lastPoint.x, lastPoint.y);
@@ -496,7 +545,7 @@
                     selectionCtx.stroke();
                 }
                 
-                // Crop selection
+                // 자르기
                 if (cropRect) {
                     selectionCtx.strokeStyle = '#10b981';
                     selectionCtx.lineWidth = lineWidthSlider.value / scale;
@@ -641,25 +690,20 @@
                 updateButtonStates();
             }
             
-            function addNewLayer(pixelsToFill) {
-                if (pixelsToFill.length === 0) return;
-
-                const newPixelSet = new Set(pixelsToFill.map(p => `${p.x},${p.y}`));
-
-                layers = layers.map(layer => {
-                    const remainingPixels = layer.pixels.filter(p => !newPixelSet.has(`${p.x},${p.y}`));
-                    if (remainingPixels.length === 0) return null;
-                    return { ...layer, pixels: remainingPixels };
-                }).filter(Boolean);
+            // --- addNewLayer: 레이어 구조 변경 ---
+            function addNewLayer(layerInfo) {
+                if (!layerInfo.data || layerInfo.data.length === 0) return;
 
                 const newLayer = {
                     id: Date.now() + Math.random(),
-                    pixels: pixelsToFill,
+                    type: layerInfo.type,
+                    data: layerInfo.data,
                     color: colorPicker.value,
                     opacity: parseFloat(opacitySlider.value),
                     blendMode: blendModeSelect.value,
                     feather: parseFloat(featherSlider.value)
                 };
+                
                 layers.push(newLayer);
                 activeLayerIds = [newLayer.id];
                 renderAll();
@@ -675,7 +719,6 @@
                 return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
             }
             
-            // --- closeAndFillPolygon: 정밀도 향상을 위해 마스크 기반으로 변경 ---
             function closeAndFillPolygon() {
                 if (polygonPoints.length < 3) {
                     polygonPoints = [];
@@ -684,39 +727,8 @@
                     showMessage("도형을 완성하려면 3개 이상의 점이 필요합니다.", 2000);
                     return;
                 }
-
-                const maskCanvas = document.createElement('canvas');
-                maskCanvas.width = originalImage.width;
-                maskCanvas.height = originalImage.height;
-                const maskCtx = maskCanvas.getContext('2d');
-
-                // Draw the polygon on the mask canvas
-                maskCtx.beginPath();
-                maskCtx.moveTo(polygonPoints[0].x, polygonPoints[0].y);
-                for (let i = 1; i < polygonPoints.length; i++) {
-                    maskCtx.lineTo(polygonPoints[i].x, polygonPoints[i].y);
-                }
-                maskCtx.closePath();
-                maskCtx.fillStyle = 'black'; // Use a solid color for the mask
-                maskCtx.fill();
-
-                // Get the pixel data from the mask
-                const imageData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
-                const data = imageData.data;
-                const pixelsToFill = [];
-
-                // Collect coordinates of filled pixels
-                for (let i = 0; i < data.length; i += 4) {
-                    // Check the alpha channel (data[i+3]) to see if the pixel is filled
-                    if (data[i + 3] > 0) {
-                        const pixelIndex = i / 4;
-                        const x = pixelIndex % maskCanvas.width;
-                        const y = Math.floor(pixelIndex / maskCanvas.width);
-                        pixelsToFill.push({ x, y });
-                    }
-                }
                 
-                addNewLayer(pixelsToFill);
+                addNewLayer({ type: 'polygon', data: [...polygonPoints] });
                 
                 polygonPoints = [];
                 polygonPreviewEndPoint = null;
@@ -734,7 +746,6 @@
                     return;
                 }
                 
-                // For any other tool on touch, prevent default scroll/pan behavior
                 if (isTouch) {
                     e.preventDefault();
                 }
@@ -745,7 +756,7 @@
                     lastTapTime = currentTime;
                     if (tapLength < 300 && tapLength > 0) { // Double tap
                         if (activeTool === 'polygonLassoSelect' && isPolygonDrawing && polygonPoints.length > 1) {
-                            polygonPoints.pop(); // Remove the point added by the first tap of the double-tap
+                            polygonPoints.pop();
                             closeAndFillPolygon();
                         }
                         return; 
@@ -763,10 +774,38 @@
                     const y = Math.round(pos.y);
                     const coordinateString = `${x},${y}`;
                     let clickedLayer = null;
+
                     for (let i = layers.length - 1; i >= 0; i--) {
                         const layer = layers[i];
-                        const pixelSet = new Set(layer.pixels.map(p => `${p.x},${p.y}`));
-                        if (pixelSet.has(coordinateString)) {
+                        let isInside = false;
+                        switch (layer.type) {
+                            case 'polygon':
+                            case 'rectangle':
+                                const tempCanvas = document.createElement('canvas');
+                                const tempCtx = tempCanvas.getContext('2d');
+                                tempCtx.beginPath();
+                                if (layer.type === 'polygon') {
+                                    tempCtx.moveTo(layer.data[0].x, layer.data[0].y);
+                                    for (let j = 1; j < layer.data.length; j++) {
+                                        tempCtx.lineTo(layer.data[j].x, layer.data[j].y);
+                                    }
+                                    tempCtx.closePath();
+                                } else {
+                                    tempCtx.rect(layer.data.x, layer.data.y, layer.data.width, layer.data.height);
+                                }
+                                if (tempCtx.isPointInPath(pos.x, pos.y)) {
+                                    isInside = true;
+                                }
+                                break;
+                            case 'pixels':
+                                const pixelSet = new Set(layer.data.map(p => `${p.x},${p.y}`));
+                                if (pixelSet.has(coordinateString)) {
+                                    isInside = true;
+                                }
+                                break;
+                        }
+
+                        if (isInside) {
                             clickedLayer = layer;
                             break;
                         }
@@ -848,7 +887,7 @@
                         queue.push({ x: x - 1, y: y }, { x: x + 1, y: y }, { x: x, y: y - 1 }, { x: x, y: y + 1 });
                     }
                 }
-                addNewLayer(pixelsToFill);
+                addNewLayer({type: 'pixels', data: pixelsToFill});
             }
             
             function handleApplyCrop() {
@@ -1059,14 +1098,9 @@
                     isDrawing = false;
                     cancelAnimationFrame(animationFrameId);
                     if (activeTool === 'rectangularSelect' && selectionRect && selectionRect.width > 1 && selectionRect.height > 1) {
-                        const pixelsToFill = [];
-                        const { x, y, width, height } = selectionRect;
-                        for (let i = y; i < y + height; i++) {
-                            for (let j = x; j < x + width; j++) {
-                                pixelsToFill.push({ x: Math.round(j), y: Math.round(i) });
-                            }
-                        }
-                        addNewLayer(pixelsToFill);
+                        addNewLayer({ type: 'rectangle', data: { ...selectionRect } });
+                        selectionRect = null;
+                        renderSelectionCanvas();
                     }
                     updateButtonStates();
                 }
