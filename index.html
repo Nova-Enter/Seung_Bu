@@ -57,44 +57,59 @@
         @media (max-width: 768px) {
             .app-container {
                 padding: 0.5rem;
-                margin: 0.25rem;
-                gap: 0.5rem;
+                margin: 0.1rem;
+                gap: 0.25rem;
             }
             h1.text-lg {
-                font-size: 1rem; /* 16px */
+                font-size: 1rem;
             }
             .btn {
-                padding: 5px 10px;
-                font-size: 12px;
+                padding: 4px 8px;
+                font-size: 11px;
+            }
+            #toggleToolsBtn {
+                padding: 3px 8px;
+                font-size: 11px;
             }
             .flex-shrink-0.border-b {
                 padding-bottom: 0.5rem;
             }
             div.flex.flex-wrap.gap-x-3 {
-                 gap: 0.5rem 0.75rem;
+                 gap: 0.25rem 0.5rem;
             }
             label.text-xs {
-                font-size: 11px;
+                font-size: 10px;
             }
             input.w-20 { /* Sliders */
-                width: 4.5rem; /* 72px */
+                width: 3.5rem;
             }
             .color-swatch {
-                width: 20px;
-                height: 20px;
+                width: 18px;
+                height: 18px;
+            }
+            input[type="color"] {
+                width: 1.5rem;
+                height: 1.5rem;
             }
             .w-px.bg-gray-300 { /* Dividers */
                 margin-left: 0.25rem;
                 margin-right: 0.25rem;
+            }
+            .slider-value {
+                font-size: 10px;
+                min-width: 24px;
             }
         }
     </style>
 </head>
 <body>
     <div class="app-container bg-white rounded-xl shadow-xl p-3 m-2 flex flex-col gap-2 max-h-[calc(100vh-1rem)]">
-        <h1 class="text-lg font-bold text-center text-gray-800 flex-shrink-0">도면 자동 색칠 앱</h1>
+        <div class="flex-shrink-0 flex justify-center items-center relative p-1">
+            <h1 class="text-lg font-bold text-center text-gray-800">도면 자동 색칠 앱</h1>
+            <button id="toggleToolsBtn" class="btn btn-secondary absolute top-1 right-1 md:hidden">도구</button>
+        </div>
         
-        <div class="flex-shrink-0 border-b border-gray-200 pb-2 space-y-2">
+        <div id="toolsContainer" class="flex-shrink-0 border-b border-gray-200 pb-2 space-y-2">
             <div class="flex flex-wrap gap-x-3 gap-y-2 justify-center items-center">
                 <button id="uploadBtn" class="btn btn-primary">이미지/PDF</button>
                 <input type="file" id="fileInput" accept="image/png, image/jpeg, application/pdf" class="hidden" />
@@ -119,14 +134,17 @@
                 <div class="flex items-center gap-1">
                     <label for="opacitySlider" class="text-xs font-medium text-gray-600">투명도:</label>
                     <input type="range" id="opacitySlider" min="0" max="1" step="0.01" value="1" class="w-20" />
+                    <span id="opacityValue" class="text-xs font-medium text-gray-700 w-8 text-right slider-value">1.00</span>
                 </div>
                 <div class="flex items-center gap-1">
                     <label for="lineWidthSlider" class="text-xs font-medium text-gray-600">선굵기:</label>
                     <input type="range" id="lineWidthSlider" min="1" max="10" step="0.5" value="1" class="w-20" />
+                    <span id="lineWidthValue" class="text-xs font-medium text-gray-700 w-8 text-right slider-value">1.0</span>
                 </div>
                 <div class="flex items-center gap-1">
                     <label for="featherSlider" class="text-xs font-medium text-gray-600">페더:</label>
                     <input type="range" id="featherSlider" min="0" max="20" step="0.5" value="0" class="w-20" />
+                    <span id="featherValue" class="text-xs font-medium text-gray-700 w-8 text-right slider-value">0.0</span>
                 </div>
                 <div class="flex items-center gap-1">
                     <label for="blendModeSelect" class="text-xs font-medium text-gray-600">블렌딩:</label>
@@ -187,6 +205,8 @@
             const canvasSizer = document.getElementById('canvasSizer');
             const noImageText = document.getElementById('noImageText');
             const messageBox = document.getElementById('messageBox');
+            const toggleToolsBtn = document.getElementById('toggleToolsBtn');
+            const toolsContainer = document.getElementById('toolsContainer');
             const panBtn = document.getElementById('panBtn');
             const selectLayerBtn = document.getElementById('selectLayerBtn');
             const smartFillBtn = document.getElementById('smartFillBtn');
@@ -200,6 +220,9 @@
             const opacitySlider = document.getElementById('opacitySlider');
             const lineWidthSlider = document.getElementById('lineWidthSlider');
             const featherSlider = document.getElementById('featherSlider');
+            const opacityValue = document.getElementById('opacityValue');
+            const lineWidthValue = document.getElementById('lineWidthValue');
+            const featherValue = document.getElementById('featherValue');
             const blendModeSelect = document.getElementById('blendModeSelect');
             const rotateLeftBtn = document.getElementById('rotateLeftBtn');
             const rotateRightBtn = document.getElementById('rotateRightBtn');
@@ -461,11 +484,11 @@
                     selectionCtx.stroke();
                 }
 
-                // Polygon selection preview line
+                // Polygon selection preview line (SOLID LINE)
                 if (polygonPreviewEndPoint && polygonPoints.length > 0) {
                     selectionCtx.strokeStyle = '#4f46e5';
                     selectionCtx.lineWidth = lineWidthSlider.value / scale;
-                    selectionCtx.setLineDash([3, 3]);
+                    selectionCtx.setLineDash([]); // Changed from dashed to solid
                     selectionCtx.beginPath();
                     const lastPoint = polygonPoints[polygonPoints.length - 1];
                     selectionCtx.moveTo(lastPoint.x, lastPoint.y);
@@ -651,7 +674,8 @@
                 const clientY = e.clientY ?? (e.touches ? e.touches[0].clientY : 0);
                 return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
             }
-
+            
+            // --- closeAndFillPolygon: 정밀도 향상을 위해 마스크 기반으로 변경 ---
             function closeAndFillPolygon() {
                 if (polygonPoints.length < 3) {
                     polygonPoints = [];
@@ -661,25 +685,38 @@
                     return;
                 }
 
-                const pixelsInPolygon = [];
-                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-                polygonPoints.forEach(p => {
-                    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
-                    maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
-                });
-                for (let y = Math.floor(minY); y <= Math.ceil(maxY); y++) {
-                    for (let x = Math.floor(minX); x <= Math.ceil(maxX); x++) {
-                        let inside = false;
-                        for (let i = 0, j = polygonPoints.length - 1; i < polygonPoints.length; j = i++) {
-                            const xi = polygonPoints[i].x, yi = polygonPoints[i].y;
-                            const xj = polygonPoints[j].x, yj = polygonPoints[j].y;
-                            const intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
-                            if (intersect) inside = !inside;
-                        }
-                        if (inside) pixelsInPolygon.push({ x, y });
+                const maskCanvas = document.createElement('canvas');
+                maskCanvas.width = originalImage.width;
+                maskCanvas.height = originalImage.height;
+                const maskCtx = maskCanvas.getContext('2d');
+
+                // Draw the polygon on the mask canvas
+                maskCtx.beginPath();
+                maskCtx.moveTo(polygonPoints[0].x, polygonPoints[0].y);
+                for (let i = 1; i < polygonPoints.length; i++) {
+                    maskCtx.lineTo(polygonPoints[i].x, polygonPoints[i].y);
+                }
+                maskCtx.closePath();
+                maskCtx.fillStyle = 'black'; // Use a solid color for the mask
+                maskCtx.fill();
+
+                // Get the pixel data from the mask
+                const imageData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+                const data = imageData.data;
+                const pixelsToFill = [];
+
+                // Collect coordinates of filled pixels
+                for (let i = 0; i < data.length; i += 4) {
+                    // Check the alpha channel (data[i+3]) to see if the pixel is filled
+                    if (data[i + 3] > 0) {
+                        const pixelIndex = i / 4;
+                        const x = pixelIndex % maskCanvas.width;
+                        const y = Math.floor(pixelIndex / maskCanvas.width);
+                        pixelsToFill.push({ x, y });
                     }
                 }
-                addNewLayer(pixelsInPolygon);
+                
+                addNewLayer(pixelsToFill);
                 
                 polygonPoints = [];
                 polygonPreviewEndPoint = null;
@@ -696,6 +733,11 @@
                     handlePanStart(e);
                     return;
                 }
+                
+                // For any other tool on touch, prevent default scroll/pan behavior
+                if (isTouch) {
+                    e.preventDefault();
+                }
 
                 if (isTouch) {
                     const currentTime = new Date().getTime();
@@ -703,7 +745,6 @@
                     lastTapTime = currentTime;
                     if (tapLength < 300 && tapLength > 0) { // Double tap
                         if (activeTool === 'polygonLassoSelect' && isPolygonDrawing && polygonPoints.length > 1) {
-                            e.preventDefault();
                             polygonPoints.pop(); // Remove the point added by the first tap of the double-tap
                             closeAndFillPolygon();
                         }
@@ -1157,6 +1198,7 @@
                     if (isPanning) {
                         handlePanMove(e);
                     } else {
+                        e.preventDefault(); // Prevent scrolling while drawing
                         const event = { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY, touches: e.touches, shiftKey: e.shiftKey };
                         if (isDrawing) {
                             lastClientPos = { x: event.clientX, y: event.clientY };
@@ -1220,17 +1262,39 @@
                 rotateRightBtn.addEventListener('click', () => handleRotate(90));
                 colorPicker.addEventListener('input', handleColorPickerInput);
                 colorPicker.addEventListener('change', handleColorPickerChange);
-                opacitySlider.addEventListener('input', handleOpacityChange);
+
+                opacitySlider.addEventListener('input', () => {
+                    handleOpacityChange();
+                    opacityValue.textContent = parseFloat(opacitySlider.value).toFixed(2);
+                });
                 opacitySlider.addEventListener('mouseup', handleOpacityChangeEnd);
                 opacitySlider.addEventListener('touchend', handleOpacityChangeEnd);
-                blendModeSelect.addEventListener('change', handleBlendModeChange);
-                featherSlider.addEventListener('input', handleFeatherChange);
+                
+                lineWidthSlider.addEventListener('input', () => {
+                    renderSelectionCanvas();
+                    lineWidthValue.textContent = parseFloat(lineWidthSlider.value).toFixed(1);
+                });
+
+                featherSlider.addEventListener('input', () => {
+                    handleFeatherChange();
+                    featherValue.textContent = parseFloat(featherSlider.value).toFixed(1);
+                });
                 featherSlider.addEventListener('mouseup', handleFeatherChangeEnd);
                 featherSlider.addEventListener('touchend', handleFeatherChangeEnd);
-                lineWidthSlider.addEventListener('input', renderSelectionCanvas);
+                
+                blendModeSelect.addEventListener('change', handleBlendModeChange);
                 
                 window.addEventListener('resize', handleResize);
                 window.addEventListener('keydown', handleKeyDown);
+                
+                // Toggle Tools Button
+                toggleToolsBtn.addEventListener('click', () => {
+                    toolsContainer.classList.toggle('hidden');
+                });
+                if (window.innerWidth < 768) {
+                    toolsContainer.classList.add('hidden');
+                }
+
 
                 // Context Menu Events
                 canvasContainer.addEventListener('contextmenu', (e) => {
@@ -1264,6 +1328,9 @@
                 // Initial setup
                 createSwatches();
                 updateButtonStates();
+                opacityValue.textContent = parseFloat(opacitySlider.value).toFixed(2);
+                lineWidthValue.textContent = parseFloat(lineWidthSlider.value).toFixed(1);
+                featherValue.textContent = parseFloat(featherSlider.value).toFixed(1);
             }
 
             init();
