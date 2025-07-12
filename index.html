@@ -115,6 +115,7 @@
                 <input type="file" id="fileInput" accept="image/png, image/jpeg, application/pdf" class="hidden" />
                 <div class="w-px bg-gray-300 h-6 mx-1"></div>
                 <button id="panBtn" class="btn btn-secondary">이동</button>
+                <button id="strokeBtn" class="btn btn-secondary">테두리만</button>
                 <button id="selectLayerBtn" class="btn btn-secondary">레이어 선택</button>
                 <button id="smartFillBtn" class="btn btn-secondary">스마트 채우기</button>
                 <button id="rectSelectBtn" class="btn btn-secondary">영역 선택</button>
@@ -208,6 +209,7 @@
             const toggleToolsBtn = document.getElementById('toggleToolsBtn');
             const toolsContainer = document.getElementById('toolsContainer');
             const panBtn = document.getElementById('panBtn');
+            const strokeBtn = document.getElementById('strokeBtn');
             const selectLayerBtn = document.getElementById('selectLayerBtn');
             const smartFillBtn = document.getElementById('smartFillBtn');
             const rectSelectBtn = document.getElementById('rectSelectBtn');
@@ -253,6 +255,7 @@
             let activeLayerIds = [];
             let isDrawing = false; // For rectangular select and crop
             let isPolygonDrawing = false; // For polygon select
+            let isStrokeMode = false;
             let startPos = { x: 0, y: 0 };
             let lastClientPos = { x: 0, y: 0 };
             let animationFrameId;
@@ -293,13 +296,13 @@
                 const hasSelection = !!selectionRect;
                 const hasCrop = !!cropRect;
 
-                [panBtn, selectLayerBtn, smartFillBtn, rectSelectBtn, polySelectBtn, cropBtn, resetBtn, downloadPngBtn, downloadJpgBtn, downloadPdfBtn, rotateLeftBtn, rotateRightBtn].forEach(btn => btn.disabled = !hasImage);
+                [panBtn, strokeBtn, selectLayerBtn, smartFillBtn, rectSelectBtn, polySelectBtn, cropBtn, resetBtn, downloadPngBtn, downloadJpgBtn, downloadPdfBtn, rotateLeftBtn, rotateRightBtn].forEach(btn => btn.disabled = !hasImage);
                 selectLayerBtn.disabled = !hasImage || layers.length === 0;
                 applyCropBtn.disabled = !hasCrop;
                 clearSelectionBtn.disabled = !hasSelection && !hasCrop && polygonPoints.length === 0 && activeLayerIds.length === 0;
                 undoBtn.disabled = historyPointer <= 0;
                 const isSelectionToolActive = ['rectangularSelect', 'polygonLassoSelect', 'crop'].includes(activeTool);
-                lineWidthSlider.disabled = !isSelectionToolActive;
+                lineWidthSlider.disabled = !isSelectionToolActive && !isStrokeMode;
                 featherSlider.disabled = activeLayerIds.length === 0;
                 
                 document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('tool-active'));
@@ -311,6 +314,7 @@
                     }[activeTool]);
                     if(activeBtn) activeBtn.classList.add('tool-active');
                 }
+                strokeBtn.classList.toggle('tool-active', isStrokeMode);
                 
                 let cursor = 'default';
                 if (activeTool) {
@@ -320,7 +324,6 @@
                 }
                 canvasContainer.style.cursor = cursor;
                 
-                // Allow interactions on the drawing canvas only for drawing tools
                 drawingCanvas.style.pointerEvents = (activeTool === 'pan' || !activeTool) ? 'none' : 'auto';
             }
             
@@ -390,7 +393,7 @@
                 isPolygonDrawing = false;
                 cropRect = null;
                 activeLayerIds = [];
-                polygonPreviewEndPoint = null; // Clear preview line
+                polygonPreviewEndPoint = null;
                 renderSelectionCanvas();
                 updateButtonStates();
             }
@@ -410,7 +413,7 @@
                 drawingCtx.drawImage(originalImage, 0, 0);
 
                 const layerGroups = layers.reduce((acc, layer) => {
-                    const key = `${layer.color}-${layer.opacity}-${layer.blendMode}-${layer.feather}`;
+                    const key = `${layer.color}-${layer.opacity}-${layer.blendMode}-${layer.feather}-${layer.isStroke}-${layer.strokeWidth}`;
                     if (!acc[key]) {
                         acc[key] = [];
                     }
@@ -427,26 +430,49 @@
                     const groupCtx = groupCanvas.getContext('2d');
                     
                     groupCtx.fillStyle = groupProperties.color;
+                    groupCtx.strokeStyle = groupProperties.color;
+                    if (groupProperties.isStroke) {
+                        groupCtx.lineWidth = groupProperties.strokeWidth;
+                        groupCtx.lineCap = 'round';
+                        groupCtx.lineJoin = 'round';
+                    }
 
                     group.forEach(layer => {
+                        groupCtx.beginPath();
                         switch (layer.type) {
                             case 'polygon':
-                                groupCtx.beginPath();
                                 groupCtx.moveTo(layer.data[0].x, layer.data[0].y);
                                 for (let i = 1; i < layer.data.length; i++) {
                                     groupCtx.lineTo(layer.data[i].x, layer.data[i].y);
                                 }
                                 groupCtx.closePath();
-                                groupCtx.fill();
                                 break;
                             case 'rectangle':
-                                groupCtx.fillRect(layer.data.x, layer.data.y, layer.data.width, layer.data.height);
+                                groupCtx.rect(layer.data.x, layer.data.y, layer.data.width, layer.data.height);
                                 break;
                             case 'pixels':
-                                layer.data.forEach(p => {
-                                    groupCtx.fillRect(p.x, p.y, 1, 1);
-                                });
+                                if (groupProperties.isStroke) {
+                                    const allPixels = new Set(layer.data.map(p => `${p.x},${p.y}`));
+                                    allPixels.forEach(pStr => {
+                                        const [x, y] = pStr.split(',').map(Number);
+                                        if (!allPixels.has(`${x},${y-1}`)) { groupCtx.moveTo(x, y); groupCtx.lineTo(x + 1, y); }
+                                        if (!allPixels.has(`${x+1},${y}`)) { groupCtx.moveTo(x + 1, y); groupCtx.lineTo(x + 1, y + 1); }
+                                        if (!allPixels.has(`${x},${y+1}`)) { groupCtx.moveTo(x + 1, y + 1); groupCtx.lineTo(x, y + 1); }
+                                        if (!allPixels.has(`${x-1},${y}`)) { groupCtx.moveTo(x, y + 1); groupCtx.lineTo(x, y); }
+                                    });
+                                } else {
+                                    layer.data.forEach(p => {
+                                        groupCtx.fillRect(p.x, p.y, 1, 1);
+                                    });
+                                }
                                 break;
+                        }
+                        if (layer.type !== 'pixels' || groupProperties.isStroke) {
+                             if (groupProperties.isStroke) {
+                                groupCtx.stroke();
+                            } else {
+                                groupCtx.fill();
+                            }
                         }
                     });
 
@@ -686,6 +712,8 @@
                     id: Date.now() + Math.random(),
                     type: layerInfo.type,
                     data: layerInfo.data,
+                    isStroke: isStrokeMode,
+                    strokeWidth: isStrokeMode ? parseFloat(lineWidthSlider.value) : null,
                     color: colorPicker.value,
                     opacity: parseFloat(opacitySlider.value),
                     blendMode: blendModeSelect.value,
@@ -1265,12 +1293,17 @@
 
             function init() {
                 // Add tool-btn class for easier selection
-                [panBtn, selectLayerBtn, smartFillBtn, rectSelectBtn, polySelectBtn, cropBtn, applyCropBtn, clearSelectionBtn, undoBtn, resetBtn, downloadPngBtn, downloadJpgBtn, downloadPdfBtn, rotateLeftBtn, rotateRightBtn].forEach(btn => btn.classList.add('tool-btn'));
+                [panBtn, strokeBtn, selectLayerBtn, smartFillBtn, rectSelectBtn, polySelectBtn, cropBtn, applyCropBtn, clearSelectionBtn, undoBtn, resetBtn, downloadPngBtn, downloadJpgBtn, downloadPdfBtn, rotateLeftBtn, rotateRightBtn].forEach(btn => btn.classList.add('tool-btn'));
                 
                 // Event Listeners
                 uploadBtn.addEventListener('click', () => fileInput.click());
                 fileInput.addEventListener('change', handleFileChange);
                 panBtn.addEventListener('click', () => activateTool('pan'));
+                strokeBtn.addEventListener('click', () => {
+                    isStrokeMode = !isStrokeMode;
+                    strokeBtn.classList.toggle('tool-active', isStrokeMode);
+                    showMessage(isStrokeMode ? '테두리만 칠하기 모드가 활성화되었습니다.' : '채우기 모드가 활성화되었습니다.');
+                });
                 selectLayerBtn.addEventListener('click', () => activateTool('selectLayer'));
                 smartFillBtn.addEventListener('click', () => activateTool('smartFill'));
                 rectSelectBtn.addEventListener('click', () => activateTool('rectangularSelect'));
@@ -1316,7 +1349,9 @@
                 toggleToolsBtn.addEventListener('click', () => {
                     toolsContainer.classList.toggle('hidden');
                 });
-                if (window.innerWidth < 768) {
+                if (window.innerWidth >= 768) {
+                    toggleToolsBtn.classList.add('hidden');
+                } else {
                     toolsContainer.classList.add('hidden');
                 }
 
