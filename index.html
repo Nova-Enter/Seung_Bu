@@ -401,7 +401,6 @@
                 handleResize();
             }
 
-            // --- 렌더링 로직 개선: 덧칠 문제 해결 ---
             function renderDrawingCanvas() {
                 if (!originalImage) return;
                 
@@ -410,7 +409,6 @@
                 drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
                 drawingCtx.drawImage(originalImage, 0, 0);
 
-                // 속성별로 레이어 그룹화
                 const layerGroups = layers.reduce((acc, layer) => {
                     const key = `${layer.color}-${layer.opacity}-${layer.blendMode}-${layer.feather}`;
                     if (!acc[key]) {
@@ -420,7 +418,6 @@
                     return acc;
                 }, {});
 
-                // 그룹별로 렌더링
                 Object.values(layerGroups).forEach(group => {
                     const groupProperties = group[0]; 
 
@@ -431,7 +428,6 @@
                     
                     groupCtx.fillStyle = groupProperties.color;
 
-                    // 그룹 내 모든 레이어를 하나의 캔버스에 그림
                     group.forEach(layer => {
                         switch (layer.type) {
                             case 'polygon':
@@ -454,14 +450,12 @@
                         }
                     });
 
-                    // 그룹화된 캔버스를 최종 캔버스에 적용
                     drawingCtx.globalAlpha = groupProperties.opacity;
                     drawingCtx.globalCompositeOperation = groupProperties.blendMode || 'source-over';
                     drawingCtx.filter = `blur(${groupProperties.feather || 0}px)`;
                     drawingCtx.drawImage(groupCanvas, 0, 0);
                 });
                 
-                // 컨텍스트 속성 초기화
                 drawingCtx.filter = 'none';
                 drawingCtx.globalAlpha = 1.0;
                 drawingCtx.globalCompositeOperation = 'source-over';
@@ -473,7 +467,6 @@
                 selectionCanvas.height = originalImage.height;
                 selectionCtx.clearRect(0, 0, selectionCanvas.width, selectionCanvas.height);
 
-                // 선택된 레이어 외곽선 (Marching Ants)
                 if (activeLayerIds.length > 0) {
                     if (!antsInterval) startMarchingAnts();
                     selectionCtx.strokeStyle = '#000';
@@ -514,7 +507,6 @@
                     stopMarchingAnts();
                 }
 
-                // 사각 선택
                 if (selectionRect) {
                     selectionCtx.strokeStyle = '#4f46e5';
                     selectionCtx.lineWidth = lineWidthSlider.value / scale;
@@ -522,7 +514,6 @@
                     selectionCtx.strokeRect(selectionRect.x, selectionRect.y, selectionRect.width, selectionRect.height);
                 }
 
-                // 직선 선택 (그려진 선)
                 if (polygonPoints.length > 0) {
                     selectionCtx.strokeStyle = '#4f46e5';
                     selectionCtx.lineWidth = lineWidthSlider.value / scale;
@@ -533,7 +524,6 @@
                     selectionCtx.stroke();
                 }
 
-                // 직선 선택 미리보기 선 (실선)
                 if (polygonPreviewEndPoint && polygonPoints.length > 0) {
                     selectionCtx.strokeStyle = '#4f46e5';
                     selectionCtx.lineWidth = lineWidthSlider.value / scale;
@@ -545,11 +535,10 @@
                     selectionCtx.stroke();
                 }
                 
-                // 자르기
                 if (cropRect) {
                     selectionCtx.strokeStyle = '#10b981';
                     selectionCtx.lineWidth = lineWidthSlider.value / scale;
-                    selectionCtx.setLineDash([5, 5]);
+                    selectionCtx.setLineDash([]);
                     selectionCtx.strokeRect(cropRect.x, cropRect.y, cropRect.width, cropRect.height);
                 }
                 selectionCtx.setLineDash([]);
@@ -568,7 +557,7 @@
                 selectionCanvas.style.width = `100%`;
                 selectionCanvas.style.height = `100%`;
 
-                renderSelectionCanvas(); // Redraw selection lines with correct thickness on zoom
+                renderSelectionCanvas();
             }
 
             function handleFileChange(event) {
@@ -690,7 +679,6 @@
                 updateButtonStates();
             }
             
-            // --- addNewLayer: 레이어 구조 변경 ---
             function addNewLayer(layerInfo) {
                 if (!layerInfo.data || layerInfo.data.length === 0) return;
 
@@ -711,7 +699,7 @@
             }
             
             function getMousePos(e) {
-                const rect = drawingCanvas.getBoundingClientRect(); // Use drawingCanvas for coords
+                const rect = drawingCanvas.getBoundingClientRect();
                 const scaleX = drawingCanvas.width / rect.width;
                 const scaleY = drawingCanvas.height / rect.height;
                 const clientX = e.clientX ?? (e.touches ? e.touches[0].clientX : 0);
@@ -897,21 +885,7 @@
                 tempCanvas.width = drawingCanvas.width;
                 tempCanvas.height = drawingCanvas.height;
                 const tempCtx = tempCanvas.getContext('2d');
-                tempCtx.drawImage(originalImage, 0, 0);
-                layers.forEach(layer => {
-                    const layerCanvas = document.createElement('canvas');
-                    layerCanvas.width = tempCanvas.width;
-                    layerCanvas.height = tempCanvas.height;
-                    const layerCtx = layerCanvas.getContext('2d');
-                    layerCtx.fillStyle = layer.color;
-                    layer.pixels.forEach(p => { layerCtx.fillRect(p.x, p.y, 1, 1); });
-                    
-                    tempCtx.globalAlpha = layer.opacity;
-                    tempCtx.globalCompositeOperation = layer.blendMode || 'source-over';
-                    tempCtx.drawImage(layerCanvas, 0, 0);
-                });
-                tempCtx.globalAlpha = 1.0;
-                tempCtx.globalCompositeOperation = 'source-over';
+                tempCtx.drawImage(drawingCanvas, 0, 0);
 
                 const sx = Math.max(0, cropRect.x), sy = Math.max(0, cropRect.y);
                 const sWidth = Math.min(drawingCanvas.width - sx, cropRect.width), sHeight = Math.min(drawingCanvas.height - sy, cropRect.height);
@@ -1057,12 +1031,29 @@
                 if (clientY < containerRect.top + threshold) canvasContainer.scrollTop -= scrollSpeed;
                 else if (clientY > containerRect.bottom - threshold) canvasContainer.scrollTop += scrollSpeed;
                 const currentPos = getMousePos({ clientX, clientY });
+                
                 const rect = {
-                    x: Math.min(currentPos.x, startPos.x), y: Math.min(currentPos.y, startPos.y),
-                    width: Math.abs(currentPos.x - startPos.x), height: Math.abs(currentPos.y - startPos.y)
+                    x: Math.min(currentPos.x, startPos.x),
+                    y: Math.min(currentPos.y, startPos.y),
+                    width: Math.abs(currentPos.x - startPos.x),
+                    height: Math.abs(currentPos.y - startPos.y)
                 };
-                if (activeTool === 'rectangularSelect') selectionRect = rect;
-                else if (activeTool === 'crop') cropRect = rect;
+
+                if (activeTool === 'crop') {
+                    const x1 = Math.max(0, rect.x);
+                    const y1 = Math.max(0, rect.y);
+                    const x2 = Math.min(originalImage.width, rect.x + rect.width);
+                    const y2 = Math.min(originalImage.height, rect.y + rect.height);
+                    cropRect = {
+                        x: x1,
+                        y: y1,
+                        width: x2 - x1,
+                        height: y2 - y1
+                    };
+                } else {
+                    selectionRect = rect;
+                }
+                
                 renderSelectionCanvas();
                 animationFrameId = requestAnimationFrame(startSelectionLoop);
             }
