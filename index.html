@@ -26,6 +26,7 @@
         .message-box { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background-color: #333; color: white; padding: 10px 20px; border-radius: 8px; z-index: 1000; opacity: 0; visibility: hidden; transition: all 0.3s ease-in-out; box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3); font-size: 14px; }
         .message-box.show { opacity: 1; visibility: visible; bottom: 30px; }
         .canvas-container { cursor: default; }
+        .canvas-container.grabbing { cursor: grabbing; }
         #pdfPageSelector, #contextMenu { z-index: 2000; }
         #contextMenu {
             position: fixed;
@@ -98,6 +99,7 @@
                 <button id="uploadBtn" class="btn btn-primary">이미지/PDF</button>
                 <input type="file" id="fileInput" accept="image/png, image/jpeg, application/pdf" class="hidden" />
                 <div class="w-px bg-gray-300 h-6 mx-1"></div>
+                <button id="panBtn" class="btn btn-secondary">이동</button>
                 <button id="selectLayerBtn" class="btn btn-secondary">레이어 선택</button>
                 <button id="smartFillBtn" class="btn btn-secondary">스마트 채우기</button>
                 <button id="rectSelectBtn" class="btn btn-secondary">영역 선택</button>
@@ -150,7 +152,7 @@
             <p id="noImageText" class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-gray-500 text-lg">이미지/PDF 파일을 업로드하여 시작하세요.</p>
             <div id="canvasSizer" style="position: relative; flex-shrink: 0;">
                 <canvas id="drawingCanvas" style="z-index: 1; position: absolute; top: 0; left: 0;"></canvas>
-                <canvas id="selectionCanvas" class="absolute" style="z-index: 2; top: 0; left: 0;"></canvas>
+                <canvas id="selectionCanvas" class="absolute" style="z-index: 2; top: 0; left: 0; pointer-events: none;"></canvas>
             </div>
         </div>
 
@@ -185,6 +187,7 @@
             const canvasSizer = document.getElementById('canvasSizer');
             const noImageText = document.getElementById('noImageText');
             const messageBox = document.getElementById('messageBox');
+            const panBtn = document.getElementById('panBtn');
             const selectLayerBtn = document.getElementById('selectLayerBtn');
             const smartFillBtn = document.getElementById('smartFillBtn');
             const rectSelectBtn = document.getElementById('rectSelectBtn');
@@ -239,6 +242,9 @@
             let antsInterval = null;
             
             // Zoom and Pan state
+            let isPanning = false;
+            let panStart = { x: 0, y: 0 };
+            let scrollStart = { left: 0, top: 0 };
             let pinchStartDistance = null;
             let lastScale = 1;
             let lastTapTime = 0;
@@ -264,7 +270,7 @@
                 const hasSelection = !!selectionRect;
                 const hasCrop = !!cropRect;
 
-                [selectLayerBtn, smartFillBtn, rectSelectBtn, polySelectBtn, cropBtn, resetBtn, downloadPngBtn, downloadJpgBtn, downloadPdfBtn, rotateLeftBtn, rotateRightBtn].forEach(btn => btn.disabled = !hasImage);
+                [panBtn, selectLayerBtn, smartFillBtn, rectSelectBtn, polySelectBtn, cropBtn, resetBtn, downloadPngBtn, downloadJpgBtn, downloadPdfBtn, rotateLeftBtn, rotateRightBtn].forEach(btn => btn.disabled = !hasImage);
                 selectLayerBtn.disabled = !hasImage || layers.length === 0;
                 applyCropBtn.disabled = !hasCrop;
                 clearSelectionBtn.disabled = !hasSelection && !hasCrop && polygonPoints.length === 0 && activeLayerIds.length === 0;
@@ -276,6 +282,7 @@
                 document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('tool-active'));
                 if (activeTool) {
                     const activeBtn = document.getElementById({
+                        'pan': 'panBtn',
                         'selectLayer': 'selectLayerBtn', 'smartFill': 'smartFillBtn',
                         'rectangularSelect': 'rectSelectBtn', 'polygonLassoSelect': 'polySelectBtn', 'crop': 'cropBtn'
                     }[activeTool]);
@@ -283,11 +290,15 @@
                 }
                 
                 let cursor = 'default';
-                if(activeTool) {
-                    if(activeTool === 'selectLayer' || activeTool === 'smartFill') cursor = 'pointer';
+                if (activeTool) {
+                    if (activeTool === 'pan') cursor = 'grab';
+                    else if (activeTool === 'selectLayer' || activeTool === 'smartFill') cursor = 'pointer';
                     else cursor = 'crosshair';
                 }
                 canvasContainer.style.cursor = cursor;
+                
+                // Allow interactions on the drawing canvas only for drawing tools
+                drawingCanvas.style.pointerEvents = (activeTool === 'pan' || !activeTool) ? 'none' : 'auto';
             }
             
             function createSwatches() {
@@ -593,11 +604,12 @@
                 clearAllSelections();
 
                 const messages = {
-                    smartFill: '캔버스를 클릭하여 색칠할 영역을 선택하세요.',
-                    rectangularSelect: '드래그하여 영역을 지정하면 자동으로 채워집니다.',
-                    polygonLassoSelect: '클릭으로 점을 추가하고, 더블클릭으로 도형을 완성하세요.',
-                    crop: '이미지에서 자를 영역을 드래그하세요.',
-                    selectLayer: '영역을 클릭하여 선택하세요. Shift 키로 다중 선택이 가능합니다.'
+                    'pan': '한 손가락으로 드래그하여 캔버스를 이동하세요.',
+                    'smartFill': '캔버스를 클릭하여 색칠할 영역을 선택하세요.',
+                    'rectangularSelect': '드래그하여 영역을 지정하면 자동으로 채워집니다.',
+                    'polygonLassoSelect': '클릭으로 점을 추가하고, 더블클릭으로 도형을 완성하세요.',
+                    'crop': '이미지에서 자를 영역을 드래그하세요.',
+                    'selectLayer': '영역을 클릭하여 선택하세요. Shift 키로 다중 선택이 가능합니다.'
                 };
                 showMessage(messages[toolName]);
                 if (toolName === 'polygonLassoSelect') {
@@ -632,9 +644,9 @@
             }
             
             function getMousePos(e) {
-                const rect = selectionCanvas.getBoundingClientRect();
-                const scaleX = selectionCanvas.width / rect.width;
-                const scaleY = selectionCanvas.height / rect.height;
+                const rect = drawingCanvas.getBoundingClientRect(); // Use drawingCanvas for coords
+                const scaleX = drawingCanvas.width / rect.width;
+                const scaleY = drawingCanvas.height / rect.height;
                 const clientX = e.clientX ?? (e.touches ? e.touches[0].clientX : 0);
                 const clientY = e.clientY ?? (e.touches ? e.touches[0].clientY : 0);
                 return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
@@ -677,14 +689,21 @@
             }
 
             function handleDrawStart(e) {
-                if (e.touches && (e.touches.length > 1 || activeTool === null)) return;
-                if (e.touches) {
-                    e.preventDefault();
+                const isTouch = !!e.touches;
+                if (isTouch && e.touches.length > 1) return;
+
+                if (activeTool === 'pan') {
+                    handlePanStart(e);
+                    return;
+                }
+
+                if (isTouch) {
                     const currentTime = new Date().getTime();
                     const tapLength = currentTime - lastTapTime;
                     lastTapTime = currentTime;
                     if (tapLength < 300 && tapLength > 0) { // Double tap
                         if (activeTool === 'polygonLassoSelect' && isPolygonDrawing && polygonPoints.length > 1) {
+                            e.preventDefault();
                             polygonPoints.pop(); // Remove the point added by the first tap of the double-tap
                             closeAndFillPolygon();
                         }
@@ -969,17 +988,18 @@
             }
 
             function handleMouseMove(e) {
-                if (isDrawing) {
+                if (isPanning) {
+                    handlePanMove(e);
+                } else if (isDrawing) {
                     lastClientPos = { x: e.clientX, y: e.clientY };
                 } else if (activeTool === 'polygonLassoSelect' && isPolygonDrawing && polygonPoints.length > 0) {
                     let pos = getMousePos(e);
-                    // Shift key snapping logic
                     if (e.shiftKey) {
                         const lastPoint = polygonPoints[polygonPoints.length - 1];
                         const dx = pos.x - lastPoint.x;
                         const dy = pos.y - lastPoint.y;
                         const angle = Math.atan2(dy, dx);
-                        const snappedAngle = Math.round(angle * 4 / Math.PI) * (Math.PI / 4); // Snap to 45-degree increments
+                        const snappedAngle = Math.round(angle * 4 / Math.PI) * (Math.PI / 4);
                         const distance = Math.hypot(dx, dy);
                         pos = {
                             x: lastPoint.x + Math.cos(snappedAngle) * distance,
@@ -992,7 +1012,9 @@
             }
 
             function handleMouseUp() {
-                if (isDrawing) {
+                if (isPanning) {
+                    handlePanEnd();
+                } else if (isDrawing) {
                     isDrawing = false;
                     cancelAnimationFrame(animationFrameId);
                     if (activeTool === 'rectangularSelect' && selectionRect && selectionRect.width > 1 && selectionRect.height > 1) {
@@ -1025,7 +1047,6 @@
                 const imageX = (container.scrollLeft + centerX) / oldScale;
                 const imageY = (container.scrollTop + centerY) / oldScale;
 
-                // --- 줌 안정성 강화: 최대 줌 레벨 제한 ---
                 scale = Math.max(0.1, Math.min(newScale, 8)); // Max zoom level set to 8x
                 
                 handleResize();
@@ -1084,12 +1105,39 @@
                 newImg.src = tempCanvas.toDataURL();
             }
             
+            // --- Pan Handlers ---
+            function handlePanStart(e) {
+                e.preventDefault();
+                isPanning = true;
+                panStart.x = e.clientX ?? e.touches[0].clientX;
+                panStart.y = e.clientY ?? e.touches[0].clientY;
+                scrollStart.left = canvasContainer.scrollLeft;
+                scrollStart.top = canvasContainer.scrollTop;
+                canvasContainer.classList.add('grabbing');
+            }
+
+            function handlePanMove(e) {
+                if (!isPanning) return;
+                e.preventDefault();
+                const dx = (e.clientX ?? e.touches[0].clientX) - panStart.x;
+                const dy = (e.clientY ?? e.touches[0].clientY) - panStart.y;
+                canvasContainer.scrollLeft = scrollStart.left - dx;
+                canvasContainer.scrollTop = scrollStart.top - dy;
+            }
+
+            function handlePanEnd() {
+                isPanning = false;
+                canvasContainer.classList.remove('grabbing');
+            }
+
+            // --- Touch Handlers ---
             function handleTouchStart(e) {
                 if (e.touches.length === 2) {
                     e.preventDefault();
                     pinchStartDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
                     lastScale = scale;
-                } else {
+                    isPanning = false; // Stop panning when zooming
+                } else if (e.touches.length === 1) {
                     handleDrawStart(e);
                 }
             }
@@ -1106,11 +1154,15 @@
                     
                     applyZoom(newScale, centerX, centerY);
                  } else if (e.touches.length === 1) {
-                    const event = { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY, touches: e.touches, shiftKey: e.shiftKey };
-                    if (isDrawing) {
-                        lastClientPos = { x: event.clientX, y: event.clientY };
-                    } else if (activeTool === 'polygonLassoSelect' && isPolygonDrawing && polygonPoints.length > 0) {
-                        handleMouseMove(event); // Reuse mouse move logic for touch
+                    if (isPanning) {
+                        handlePanMove(e);
+                    } else {
+                        const event = { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY, touches: e.touches, shiftKey: e.shiftKey };
+                        if (isDrawing) {
+                            lastClientPos = { x: event.clientX, y: event.clientY };
+                        } else if (activeTool === 'polygonLassoSelect' && isPolygonDrawing && polygonPoints.length > 0) {
+                            handleMouseMove(event);
+                        }
                     }
                  }
             }
@@ -1121,8 +1173,12 @@
                         pinchStartDistance = null;
                         lastScale = scale;
                     }
+                }
+                
+                if (isPanning) {
+                    handlePanEnd();
                 } else {
-                    handleMouseUp(e); // Reuse mouse up logic
+                    handleMouseUp(e);
                 }
             }
 
@@ -1142,11 +1198,12 @@
 
             function init() {
                 // Add tool-btn class for easier selection
-                [selectLayerBtn, smartFillBtn, rectSelectBtn, polySelectBtn, cropBtn, applyCropBtn, clearSelectionBtn, undoBtn, resetBtn, downloadPngBtn, downloadJpgBtn, downloadPdfBtn, rotateLeftBtn, rotateRightBtn].forEach(btn => btn.classList.add('tool-btn'));
+                [panBtn, selectLayerBtn, smartFillBtn, rectSelectBtn, polySelectBtn, cropBtn, applyCropBtn, clearSelectionBtn, undoBtn, resetBtn, downloadPngBtn, downloadJpgBtn, downloadPdfBtn, rotateLeftBtn, rotateRightBtn].forEach(btn => btn.classList.add('tool-btn'));
                 
                 // Event Listeners
                 uploadBtn.addEventListener('click', () => fileInput.click());
                 fileInput.addEventListener('change', handleFileChange);
+                panBtn.addEventListener('click', () => activateTool('pan'));
                 selectLayerBtn.addEventListener('click', () => activateTool('selectLayer'));
                 smartFillBtn.addEventListener('click', () => activateTool('smartFill'));
                 rectSelectBtn.addEventListener('click', () => activateTool('rectangularSelect'));
@@ -1193,15 +1250,16 @@
                 contextDownloadPdf.addEventListener('click', () => { handleDownload('pdf'); contextMenu.style.display = 'none'; });
                 
                 // Mouse Events
-                selectionCanvas.addEventListener('mousedown', handleDrawStart);
-                selectionCanvas.addEventListener('dblclick', handleDoubleClick);
+                const eventTarget = drawingCanvas.parentElement; // Target the sizer for events
+                eventTarget.addEventListener('mousedown', handleDrawStart);
+                eventTarget.addEventListener('dblclick', handleDoubleClick);
                 window.addEventListener('mousemove', handleMouseMove);
                 window.addEventListener('mouseup', handleMouseUp);
                 
                 // Touch Events
-                canvasContainer.addEventListener('touchstart', handleTouchStart, { passive: false });
-                canvasContainer.addEventListener('touchmove', handleTouchMove, { passive: false });
-                canvasContainer.addEventListener('touchend', handleTouchEnd);
+                eventTarget.addEventListener('touchstart', handleTouchStart, { passive: false });
+                window.addEventListener('touchmove', handleTouchMove, { passive: false });
+                window.addEventListener('touchend', handleTouchEnd);
 
                 // Initial setup
                 createSwatches();
